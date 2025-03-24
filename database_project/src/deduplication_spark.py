@@ -20,7 +20,7 @@ NON_ALPHA = re.compile("[^A-Za-z_0-9]")
 RNG = np.random.RandomState(SEED)
 MAX_HASH = np.uint64((1 << 32) - 1)
 MERSENNE_PRIME = np.uint64((1 << 61) - 1)
-
+# requirements: pyspark
 
 # Connected Components in MapReduce and Beyond
 def large_star_map(edge):
@@ -247,60 +247,10 @@ def generate_edges(nodes: List[int]) -> List[Tuple[int, int]]:
     return [(n, min_node) for n in nodes if n != min_node]
 
 
-
-if __name__ == "__main__":
-
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Near-deduplicating data with PySpark"
-    )
-    parser.add_argument(
-        "--table", type=str, help="BigQuery table to deduplicate"
-    )
-    parser.add_argument(
-        "--input_file", type=str, help="Local file to deduplicate (CSV or Parquet)"
-    )
-    parser.add_argument(
-        "--threshold", type=float, default=0.7, help="Similarity threshold"
-    )
-    parser.add_argument(
-        "--min_ngram_size", type=int, default=5, help="Shorter docs will be removed"
-    )
-    parser.add_argument("--ngram_size", type=int, default=5, help="N-gram size")
-    parser.add_argument(
-        "--num_perm", type=int, default=256, help="Number of permutations"
-    )
-    parser.add_argument("--b", type=int, default=None, help="Number of bands")
-    parser.add_argument("--r", type=int, default=None, help="Number of rows per band")
-    parser.add_argument(
-        "--column", "-c", type=str, default="content", help="Column to deduplicate"
-    )
-    parser.add_argument(
-        "--output", "-o", type=str, required=True, help="Output directory"
-    )
-    args = parser.parse_args()
-
-    # Ensure at least one input source is provided
-    if args.table is None and args.input_file is None:
-        parser.error("Either --table or --input_file must be provided")
-    # Check if output directory exists, if not create it
-
-    conf = SparkConf()
-    conf.set("spark.app.name", "MinHashLSH")
-    conf.set("spark.debug.maxToStringFields", "100")
-    spark = SparkSession.builder.config(conf=conf).getOrCreate()
-    log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
-    if not os.path.exists(args.output):
-        os.makedirs(args.output)
-        log.info(f"Created output directi addedory: {args.output}")
-
-    if args.b is None or args.r is None:
-        B, R = optimal_param(args.threshold, args.num_perm)
-        log.info(f"Using optimal parameters: {B=}, {R=}")
-    else:
-        B, R = args.b, args.r
-
+# def deduplicate(df, args):
+def deduplicate(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
+    B, R = optimal_param(threshold, num_perm)
+    log.info(f"Using optimal parameters: {B=}, {R=}")
     HASH_RANGES = [(i * R, (i + 1) * R) for i in range(B)]
     PERMUTATIONS = np.array(
         [
@@ -308,38 +258,25 @@ if __name__ == "__main__":
                 RNG.randint(1, MERSENNE_PRIME, dtype=np.uint64),
                 RNG.randint(0, MERSENNE_PRIME, dtype=np.uint64),
             )
-            for _ in range(args.num_perm)
+            for _ in range(num_perm)
         ],
         dtype=np.uint64,
     ).T
 
-    # Load data from either BigQuery or local file
-    if args.table:
-        df = spark.read.format("bigquery").option("table", args.table).load()
-    else:
-        file_extension = os.path.splitext(args.input_file)[1].lower()
-        if file_extension == '.csv':
-            df = spark.read.option("header", "true").csv(args.input_file)
-        elif file_extension in ['.parquet', '.pq']:
-            df = spark.read.parquet(args.input_file)
-        else:
-            log.error(f"Unsupported file format: {file_extension}")
-            sys.exit(1)
-    
     df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
-    records = df.select("__id__", args.column).rdd
-    records = records.repartition(args.num_perm * 2).cache()
+    records = df.select("__id__", column).rdd
+    records = records.repartition(num_perm * 2).cache()
 
     edges = (
         records.flatMap(
             lambda x: generate_hash_values(
                 content=x[1],
                 idx=x[0],
-                num_perm=args.num_perm,
-                ngram_size=args.ngram_size,
+                num_perm=num_perm,
+                ngram_size=ngram_size,
                 hashranges=HASH_RANGES,
                 permutations=PERMUTATIONS,
-                min_ngram_size=args.min_ngram_size,
+                min_ngram_size=min_ngram_size,
             )
         )
         .groupBy(lambda x: (x[0], x[1]))
@@ -371,10 +308,8 @@ if __name__ == "__main__":
     results = a.collect()
     if len(results) == 0:
         log.info("No components found.")
-        df.write.option("maxRecordsPerFile", 300_000).option(
-            "intermediateFormat", "orc"
-        ).parquet(args.output, mode="overwrite")
-        sys.exit(0)
+        return df
+        
 
     components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
         ["component", "__id__"]
@@ -382,6 +317,83 @@ if __name__ == "__main__":
     components.show()
     df = df.join(components, on="__id__", how="left")
     df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
+    return df
+
+if __name__ == "__main__":
+
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Near-deduplicating data with PySpark"
+    )
+    parser.add_argument(
+        "--table", type=str, help="BigQuery table to deduplicate"
+    )
+    parser.add_argument(
+        "--input_file", type=str, help="Local file to deduplicate (CSV or Parquet)"
+    )
+    parser.add_argument(
+        "--threshold", type=float, default=0.7, help="Similarity threshold"
+    )
+    parser.add_argument(
+        "--min_ngram_size", type=int, default=5, help="Shorter docs will be removed"
+    )
+    parser.add_argument("--ngram_size", type=int, default=5, help="N-gram size")
+    parser.add_argument(
+        "--num_perm", type=int, default=256, help="Number of permutations"
+    )
+
+    parser.add_argument(
+        "--column", "-c", type=str, default="text", help="Column to deduplicate"
+    )
+    parser.add_argument(
+        "--output", "-o", type=str, required=True, help="Output directory"
+    )
+    args = parser.parse_args()
+
+    # Ensure at least one input source is provided
+    if args.table is None and args.input_file is None:
+        parser.error("Either --table or --input_file must be provided")
+    # Check if output directory exists, if not create it
+
+    conf = SparkConf()
+    conf.set("spark.app.name", "MinHashLSH")
+    conf.set("spark.debug.maxToStringFields", "100")
+    conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+    spark = SparkSession.builder.config(conf=conf).getOrCreate()
+    log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
+    if not os.path.exists(args.output):
+        os.makedirs(args.output)
+        log.info(f"Created output directory: {args.output}")
+
+
+    # Load data from either BigQuery or local file
+    if args.table:
+        df = spark.read.format("bigquery").option("table", args.table).load()
+    else:
+        file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
+        
+        if file_extension == '.csv':
+            df = spark.read.option("header", "true").csv(args.input_file)
+            
+        elif file_extension.endswith('.json'):
+            df = spark.read.json(args.input_file)
+        elif file_extension in ['.parquet', '.pq']:
+            df = spark.read.parquet(args.input_file)
+        else:
+            log.error(f"Unsupported file format: {file_extension}")
+            sys.exit(1)
+    
+    
+    
+    df = deduplicate(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
     df.write.option("maxRecordsPerFile", 300_000).option(
         "intermediateFormat", "orc"
     ).parquet(args.output, mode="overwrite")
+
+# /dev/shm/c4_files/*.json.gz
+# /dev/shm/c4_files/c4-train.00068-of-01024.json.gz
+# python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs
+# export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs
+
+# export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && export SPARK_DRIVER_MEMORY=8g && export SPARK_EXECUTOR_MEMORY=8g && python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs

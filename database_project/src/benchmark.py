@@ -270,7 +270,7 @@ class DeduplicationBenchmark:
         # Use the read_results.py script to get the data, but capture the output
         # This function is to be used for accuracy comparison between methods
         result_command = [
-            "python",
+            "python3.10",
             "read_results.py",
             "--input", output_path,
             "--output_format", "json"  # We'll need to add this option to read_results.py
@@ -320,7 +320,7 @@ class DeduplicationBenchmark:
         os.makedirs(output_path, exist_ok=True)
         
         command = [
-            "python", 
+            "python3.10", 
             "database_project/src/deduplication_spark.py",
             "--input_file", self.input_file,
             "--threshold", str(self.threshold),
@@ -338,7 +338,7 @@ class DeduplicationBenchmark:
         if return_code == 0:
             # Assuming we have a similar read_results.py script that can count records
             count_command = [
-                "python",
+                "python3.10",
                 "read_results.py",
                 "--input", output_path
             ]
@@ -391,7 +391,7 @@ class DeduplicationBenchmark:
         os.environ["SPARK_MASTER_HOST"] = "local[1]"
         
         command = [
-            "python", 
+            "python3.10", 
             "database_project/src/deduplication_spark.py",
             "--input_file", self.input_file,
             "--threshold", str(self.threshold),
@@ -485,7 +485,7 @@ class DeduplicationBenchmark:
         # record_count = None
         # if return_code == 0:
         #     count_command = [
-        #         "python",
+        #         "python3.10",
         #         "read_results.py",
         #         "--input", output_path
         #     ]
