@@ -1,8 +1,11 @@
+import os
+
+os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
+os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
 import hashlib
 import re
 import struct
 import sys
-import os
 from itertools import tee
 from logging import Logger
 from typing import Iterable
@@ -20,6 +23,9 @@ NON_ALPHA = re.compile("[^A-Za-z_0-9]")
 RNG = np.random.RandomState(SEED)
 MAX_HASH = np.uint64((1 << 32) - 1)
 MERSENNE_PRIME = np.uint64((1 << 61) - 1)
+
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+from src.db import init_db, get_session, BenchmarkRun
 # requirements: pyspark
 
 # Connected Components in MapReduce and Beyond
@@ -263,6 +269,9 @@ def deduplicate(spark, df, column, num_perm, ngram_size, min_ngram_size, thresho
         dtype=np.uint64,
     ).T
 
+    # Get original record count
+    original_count = df.count()
+    
     df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
     records = df.select("__id__", column).rdd
     records = records.repartition(num_perm * 2).cache()
@@ -308,19 +317,28 @@ def deduplicate(spark, df, column, num_perm, ngram_size, min_ngram_size, thresho
     results = a.collect()
     if len(results) == 0:
         log.info("No components found.")
-        return df
+        return df, 0
         
+    # Count the distinct duplicate groups
+    duplicate_sets = len(set(r[1] for r in results))
+    log.info(f"Found {duplicate_sets} distinct duplicate sets")
 
     components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
         ["component", "__id__"]
     )
     components.show()
     df = df.join(components, on="__id__", how="left")
-    df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
-    return df
+    deduplicated_df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
+    
+    # Count records after deduplication
+    dedup_count = deduplicated_df.count()
+    duplicate_count = original_count - dedup_count
+    log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
+    
+    return deduplicated_df, duplicate_count
 
-if __name__ == "__main__":
-
+import glob
+def create_parser():
     import argparse
 
     parser = argparse.ArgumentParser(
@@ -349,17 +367,42 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output", "-o", type=str, required=True, help="Output directory"
     )
+    parser.add_argument(
+        "--limit_files", type=int, default=None, help="Limit the number of files to process"
+    )
     args = parser.parse_args()
 
     # Ensure at least one input source is provided
     if args.table is None and args.input_file is None:
         parser.error("Either --table or --input_file must be provided")
-    # Check if output directory exists, if not create it
+    return args
 
+
+def get_total_size_gb(files):
+    """
+    Calculate total size of files in gigabytes.
+    
+    Parameters:
+        files: List[str] - List of file paths
+        
+    Returns:
+        float: Total size in GB
+    """
+    total_bytes = sum(os.path.getsize(f) for f in files)
+    return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
+
+
+if __name__ == "__main__":
+
+    # Check if output directory exists, if not create it
+    args = create_parser()
     conf = SparkConf()
     conf.set("spark.app.name", "MinHashLSH")
     conf.set("spark.debug.maxToStringFields", "100")
     conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+    conf.set("spark.driver.memory", "64g")
+    conf.set("spark.executor.memory", "64g")
+
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
     log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
     if not os.path.exists(args.output):
@@ -377,7 +420,13 @@ if __name__ == "__main__":
             df = spark.read.option("header", "true").csv(args.input_file)
             
         elif file_extension.endswith('.json'):
-            df = spark.read.json(args.input_file)
+            input_file = args.input_file
+            if args.limit_files is not None:
+                input_file = glob.glob(input_file)[:args.limit_files]
+                print(f"Processing {len(input_file)} files")
+                print(f"Total size: {get_total_size_gb(input_file):.2f} GB")
+                
+            df = spark.read.json(input_file)
         elif file_extension in ['.parquet', '.pq']:
             df = spark.read.parquet(args.input_file)
         else:
@@ -385,15 +434,47 @@ if __name__ == "__main__":
             sys.exit(1)
     
     
+    import time
     
-    df = deduplicate(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    # Track original record count
+    original_count = df.count()
+    
+    start_time = time.time()
+    df, duplicate_count = deduplicate(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    dedup_time = time.time() - start_time
+    print(f"Deduplication took {dedup_time/60:.2f} minutes")
+    
+    start_time = time.time()
     df.write.option("maxRecordsPerFile", 300_000).option(
         "intermediateFormat", "orc"
     ).parquet(args.output, mode="overwrite")
+    write_time = time.time() - start_time
+    print(f"Writing output took {write_time/60:.2f} minutes")
+    
+    # Get final record count
+    record_count = df.count()
+    total_time = dedup_time + write_time
+    
+    # Log benchmark data if enabled
+    try:
+        
+        
+        engine = init_db()
+        session = get_session(engine)
+        
+        benchmark = BenchmarkRun.create_from_args(
+            session=session,
+            args=args,
+            duplicate_count=duplicate_count,
+            record_count=record_count,
+            execution_time=total_time,
+            notes=f"Auto-tracked benchmark"
+        )
+        
+        print(f"Benchmark data saved with ID: {benchmark.id}")
+    except Exception as e:
+        print(f"Error saving benchmark data: {e}")
 
 # /dev/shm/c4_files/*.json.gz
-# /dev/shm/c4_files/c4-train.00068-of-01024.json.gz
-# python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs
-# export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs
-
-# export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && export SPARK_DRIVER_MEMORY=8g && export SPARK_EXECUTOR_MEMORY=8g && python3.10 database_project/src/deduplication_spark.py --input_file /dev/shm/c4_files/c4-train.00068-of-01024.json.gz --output /dev/shm/c4_outputs
+# python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1
+#export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 10
