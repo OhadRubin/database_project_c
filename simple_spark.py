@@ -13,7 +13,7 @@ import raydp
 # curl -s https://checkip.amazonaws.com
 # ray start --address='master_id:6379'
 ray.init(address='auto')
-
+# python3.10 simple_spark.py
 
 # Set environment variables to ensure consistent Python version
 # This needs to be set before SparkSession is created
@@ -24,7 +24,11 @@ from pyspark import SparkConf
 def examine_cluster():
     # Initialize SparkSession with specific configurations for multi-node setup
     spark = raydp.init_spark(
-                configs = {
+            app_name="MinHashLSH",
+            num_executors=2,
+            executor_cores=100,
+            executor_memory="64g",
+            configs = {
 
                     # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                     # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
