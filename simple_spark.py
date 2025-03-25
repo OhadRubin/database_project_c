@@ -18,9 +18,10 @@ os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
 os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
 
 from pyspark import SparkConf
-def examine_cluster():
+import fire
+def examine_cluster(use_ray=False):
     # Initialize SparkSession with specific configurations for multi-node setup
-    if False:
+    if use_ray:
         import ray
         import raydp
         ray.init(address='auto')
@@ -115,4 +116,5 @@ def examine_cluster():
     print("\nSpark session stopped")
 
 if __name__ == "__main__":
-    examine_cluster()
+    import fire
+    fire.Fire(examine_cluster)
