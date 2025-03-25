@@ -24,7 +24,7 @@ MAX_HASH = np.uint64((1 << 32) - 1)
 MERSENNE_PRIME = np.uint64((1 << 61) - 1)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from src.db import init_db, get_session, BenchmarkRun
+
 
 
 
@@ -569,6 +569,7 @@ if __name__ == "__main__":
     total_time = dedup_time + write_time
     
     try:
+        from src.db import init_db, get_session, BenchmarkRun
         
         engine = init_db()
         session = get_session(engine)
