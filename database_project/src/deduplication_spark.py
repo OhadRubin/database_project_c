@@ -458,6 +458,9 @@ def create_parser():
     parser.add_argument(
         "--use_ray", type=bool, default=False, help="Use Ray for parallel execution"
     )
+    parser.add_argument(
+        "--mock", type=bool, default=False, help="Mock the execution"
+    )
     args = parser.parse_args()
 
     # Ensure at least one input source is provided
@@ -485,88 +488,94 @@ if __name__ == "__main__":
 
     # Check if output directory exists, if not create it
     args = create_parser()
-    if args.use_ray:
-        import ray
-        import raydp
-        ray.init(address='auto')
-        spark = raydp.init_spark(
-                app_name="MinHashLSH",
-                num_executors=2,
-                executor_cores=200, # how many tasks the executor can run in parallel
-                executor_memory="100g",
-                configs = {
-                        'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
-                        'spark.debug.maxToStringFields': '100',
+    if not args.mock:
+        if args.use_ray:
+            import ray
+            import raydp
+            ray.init(address='auto')
+            spark = raydp.init_spark(
+                    app_name="MinHashLSH",
+                    num_executors=2,
+                    executor_cores=200, # how many tasks the executor can run in parallel
+                    executor_memory="100g",
+                    configs = {
+                            'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                            'spark.debug.maxToStringFields': '100',
 
-                        # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
-                        # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
-                        # 'spark.app.name': 'MinHashLSH',
-                        'spark.driver.memory': '64g',
-                        # 'spark.executor.memory': '2g',
-                        # 'spark.submit.deployMode': 'client',
-                    })
-    else:
-        conf = SparkConf()
-        conf.set("spark.app.name", "MinHashLSH")
-        conf.set("spark.debug.maxToStringFields", "100")
-        conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-        conf.set("spark.driver.memory", "64g")
-        conf.set("spark.executor.memory", "64g")
-
-        spark = SparkSession.builder.config(conf=conf).getOrCreate()
-    log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
-    if not os.path.exists(args.output):
-        os.makedirs(args.output)
-        log.info(f"Created output directory: {args.output}")
-
-
-    # Load data from either BigQuery or local file
-    if args.table:
-        df = spark.read.format("bigquery").option("table", args.table).load()
-    else:
-        file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
-        
-        if file_extension == '.csv':
-            df = spark.read.option("header", "true").csv(args.input_file)
-            
-        elif file_extension.endswith('.json'):
-            input_file = args.input_file
-            if args.limit_files is not None:
-                input_file = glob.glob(input_file)[:args.limit_files]
-                print(f"Processing {len(input_file)} files")
-                print(f"Total size: {get_total_size_gb(input_file):.2f} GB")
-                
-            df = spark.read.json(input_file)
-        elif file_extension in ['.parquet', '.pq']:
-            df = spark.read.parquet(args.input_file)
+                            # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
+                            # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
+                            # 'spark.app.name': 'MinHashLSH',
+                            'spark.driver.memory': '64g',
+                            # 'spark.executor.memory': '2g',
+                            # 'spark.submit.deployMode': 'client',
+                        })
         else:
-            log.error(f"Unsupported file format: {file_extension}")
-            sys.exit(1)
-    
-    
-    import time
-    
-    # Track original record count
-    original_count = df.count()
-    
-    start_time = time.time()
-    assert args.implementation == "minhash_lsh"
-    df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-    dedup_count = original_count-duplicate_count
-    log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
-    dedup_time = time.time() - start_time
-    print(f"Deduplication took {dedup_time/60:.2f} minutes")
-    
-    start_time = time.time()
-    df.write.option("maxRecordsPerFile", 300_000).option(
-        "intermediateFormat", "orc"
-    ).parquet(args.output, mode="overwrite")
-    write_time = time.time() - start_time
-    print(f"Writing output took {write_time/60:.2f} minutes")
-    
-    # Get final record count
-    record_count = df.count()
-    total_time = dedup_time + write_time
+            conf = SparkConf()
+            conf.set("spark.app.name", "MinHashLSH")
+            conf.set("spark.debug.maxToStringFields", "100")
+            conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+            conf.set("spark.driver.memory", "64g")
+            conf.set("spark.executor.memory", "64g")
+
+            spark = SparkSession.builder.config(conf=conf).getOrCreate()
+        log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
+            log.info(f"Created output directory: {args.output}")
+
+
+        # Load data from either BigQuery or local file
+        if args.table:
+            df = spark.read.format("bigquery").option("table", args.table).load()
+        else:
+            file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
+            
+            if file_extension == '.csv':
+                df = spark.read.option("header", "true").csv(args.input_file)
+                
+            elif file_extension.endswith('.json'):
+                input_file = args.input_file
+                if args.limit_files is not None:
+                    input_file = glob.glob(input_file)[:args.limit_files]
+                    print(f"Processing {len(input_file)} files")
+                    print(f"Total size: {get_total_size_gb(input_file):.2f} GB")
+                    
+                df = spark.read.json(input_file)
+            elif file_extension in ['.parquet', '.pq']:
+                df = spark.read.parquet(args.input_file)
+            else:
+                log.error(f"Unsupported file format: {file_extension}")
+                sys.exit(1)
+        
+        
+        import time
+        
+        # Track original record count
+        original_count = df.count()
+        
+        start_time = time.time()
+        assert args.implementation == "minhash_lsh"
+        df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+        dedup_count = original_count-duplicate_count
+        log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
+        dedup_time = time.time() - start_time
+        print(f"Deduplication took {dedup_time/60:.2f} minutes")
+        
+        start_time = time.time()
+        df.write.option("maxRecordsPerFile", 300_000).option(
+            "intermediateFormat", "orc"
+        ).parquet(args.output, mode="overwrite")
+        write_time = time.time() - start_time
+        print(f"Writing output took {write_time/60:.2f} minutes")
+        
+        # Get final record count
+        record_count = df.count()
+        total_time = dedup_time + write_time
+    else:
+        duplicate_count=0
+        record_count=0
+        record_count=0
+        total_time=0
     
     try:
         from src.db import init_db, get_session, BenchmarkRun
