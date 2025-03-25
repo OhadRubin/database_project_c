@@ -27,9 +27,9 @@ def examine_cluster(use_ray=False):
         ray.init(address='auto')
         spark = raydp.init_spark(
                 app_name="MinHashLSH",
-                num_executors=2,
+                num_executors=200,
                 executor_cores=100,
-                executor_memory="64g",
+                executor_memory="2g",
                 configs = {
 
                         # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
@@ -76,7 +76,7 @@ def examine_cluster(use_ray=False):
     start_time = time.time()
     
     # Create a large RDD with specified partitions (smaller dataset to avoid memory issues)
-    rdd = sc.parallelize(range(1000000), numSlices=num_partitions)
+    rdd = sc.parallelize(range(10000000), numSlices=num_partitions)
     
     # Execute a distributed computation (map and reduce)
     # Square each number and find the sum
