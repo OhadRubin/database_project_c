@@ -10,7 +10,7 @@ import time
 # ray start --head
 # curl -s https://checkip.amazonaws.com
 # ray start --address='master_id:6379'
-# python3.10 simple_spark.py
+
 
 # Set environment variables to ensure consistent Python version
 # This needs to be set before SparkSession is created
@@ -34,12 +34,12 @@ def examine_cluster(use_ray=False):
 
                         # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                         # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
-                        'spark.app.name': 'MinHashLSH',
-                        'spark.debug.maxToStringFields': '100',
-                        'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
-                        'spark.driver.memory': '64g',
-                        'spark.executor.memory': '64g',
-                        'spark.submit.deployMode': 'client',
+                        # 'spark.app.name': 'MinHashLSH',
+                        # 'spark.debug.maxToStringFields': '100',
+                        # 'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                        # 'spark.driver.memory': '64g',
+                        # 'spark.executor.memory': '2g',
+                        # 'spark.submit.deployMode': 'client',
                     })
     else:
         conf = SparkConf()
@@ -115,6 +115,7 @@ def examine_cluster(use_ray=False):
     spark.stop()
     print("\nSpark session stopped")
 
+# python3.10 simple_spark.py --use_ray True
 if __name__ == "__main__":
     import fire
     fire.Fire(examine_cluster)
