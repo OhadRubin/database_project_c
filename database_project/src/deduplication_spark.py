@@ -493,9 +493,10 @@ if __name__ == "__main__":
             import ray
             import raydp
             ray.init(address='auto')
+            num_nodes = len([x for x in ray.nodes() if x["alive"]])
             spark = raydp.init_spark(
                     app_name="MinHashLSH",
-                    num_executors=2,
+                    num_executors=num_nodes,
                     executor_cores=200, # how many tasks the executor can run in parallel
                     executor_memory="100g",
                     configs = {
@@ -505,7 +506,7 @@ if __name__ == "__main__":
                             # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
                             'spark.driver.memory': '64g',
                         })
-            num_nodes = len([x for x in ray.nodes() if x["alive"]])
+            
         else:
             conf = SparkConf()
             conf.set("spark.app.name", "MinHashLSH")
