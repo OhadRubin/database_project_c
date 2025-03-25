@@ -416,7 +416,7 @@ if __name__ == "__main__":
         conf.set("spark.driver.memory", "64g")
         conf.set("spark.executor.memory", "64g")
 
-    spark = SparkSession.builder.config(conf=conf).getOrCreate()
+        spark = SparkSession.builder.config(conf=conf).getOrCreate()
     log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
     if not os.path.exists(args.output):
         os.makedirs(args.output)
