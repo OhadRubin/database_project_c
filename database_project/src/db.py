@@ -279,8 +279,15 @@ class AccuracyMetric(Base):
     def __repr__(self):
         return f"<AccuracyMetric(id={self.id}, result_id={self.result_id}, f1_score={self.f1_score})>"
 
-def init_db(db_path='sqlite:///benchmark_results.db'):
+
+def init_db(db_path=None):
     """Initialize the database, create tables if they don't exist"""
+    if db_path is None:
+        
+        if :
+            db_path = os.environ["POSTGRES_ADDRESS"]
+        else:
+            db_path = 'sqlite:///benchmark_results.db'
     engine = create_engine(db_path)
     Base.metadata.create_all(engine)
     return engine
