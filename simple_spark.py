@@ -2,7 +2,7 @@
 # sudo apt-get install default-jdk -y && python3.10 -m pip install pyspark
 # git clone https://github.com/OhadRubin/database_project_c
 # python3.10 -m pip install raydp
-
+# python3.10 database_project/src/download_c4.py
 import os
 from pyspark.sql import SparkSession
 import time
