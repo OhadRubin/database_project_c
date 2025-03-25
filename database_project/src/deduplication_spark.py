@@ -483,9 +483,10 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 
 
+
 # from src.brute_force_clusters import brute_force_clusters
 if __name__ == "__main__":
-
+    # assert "POSTGRES_ADDRESS" in os.environ, "POSTGRES_ADDRESS must be set"
     # Check if output directory exists, if not create it
     args = create_parser()
     if not args.mock:
