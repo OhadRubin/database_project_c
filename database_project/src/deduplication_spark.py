@@ -358,6 +358,9 @@ def create_parser():
     parser.add_argument(
         "--implementation", type=str, default="minhash_lsh", help="Implementation to use"
     )
+    parser.add_argument(
+        "--use_ray", type=bool, default=False, help="Use Ray for parallel execution"
+    )
     args = parser.parse_args()
 
     # Ensure at least one input source is provided
@@ -391,7 +394,7 @@ if __name__ == "__main__":
         ray.init(address='auto')
         spark = raydp.init_spark(
                 app_name="MinHashLSH",
-                num_executors=200,
+                num_executors=2,
                 executor_cores=1, # how many tasks the executor can run in parallel
                 executor_memory="2g",
                 configs = {

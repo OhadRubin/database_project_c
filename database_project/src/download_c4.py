@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 import httpx
 import asyncio
 from pathlib import Path
-
+# python3.10 database_project/src/download_c4.py
 spark = SparkSession.builder.appName("read_json") \
     .config("spark.local.dir", "/dev/shm/pyspark_dir") \
     .getOrCreate()
