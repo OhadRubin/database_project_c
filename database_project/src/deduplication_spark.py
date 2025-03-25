@@ -395,8 +395,8 @@ if __name__ == "__main__":
         spark = raydp.init_spark(
                 app_name="MinHashLSH",
                 num_executors=2,
-                executor_cores=1, # how many tasks the executor can run in parallel
-                executor_memory="2g",
+                executor_cores=200, # how many tasks the executor can run in parallel
+                executor_memory="100g",
                 configs = {
                         'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
                         'spark.debug.maxToStringFields': '100',
@@ -404,7 +404,7 @@ if __name__ == "__main__":
                         # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                         # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
                         # 'spark.app.name': 'MinHashLSH',
-                        # 'spark.driver.memory': '64g',
+                        'spark.driver.memory': '64g',
                         # 'spark.executor.memory': '2g',
                         # 'spark.submit.deployMode': 'client',
                     })
