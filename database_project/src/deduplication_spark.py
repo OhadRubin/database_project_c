@@ -484,7 +484,6 @@ def get_total_size_gb(files):
 
 
 
-# from src.brute_force_clusters import brute_force_clusters
 if __name__ == "__main__":
     # assert "POSTGRES_ADDRESS" in os.environ, "POSTGRES_ADDRESS must be set"
     # Check if output directory exists, if not create it
@@ -506,6 +505,7 @@ if __name__ == "__main__":
                             # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
                             'spark.driver.memory': '64g',
                         })
+            num_nodes = len([x for x in ray.nodes() if x["alive"]])
         else:
             conf = SparkConf()
             conf.set("spark.app.name", "MinHashLSH")
@@ -513,8 +513,9 @@ if __name__ == "__main__":
             conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
             conf.set("spark.driver.memory", "64g")
             conf.set("spark.executor.memory", "64g")
-
             spark = SparkSession.builder.config(conf=conf).getOrCreate()
+            num_nodes=1
+            
         log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
         if not os.path.exists(args.output):
             os.makedirs(args.output)
@@ -594,7 +595,8 @@ if __name__ == "__main__":
             execution_time=total_time,
             notes=args.implementation,
             limit_files=args.limit_files,
-            total_size_gb=total_size_gb
+            total_size_gb=total_size_gb,
+            num_nodes=num_nodes
         )
         
         print(f"Benchmark data saved with ID: {benchmark.id}")
