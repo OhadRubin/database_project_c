@@ -501,13 +501,9 @@ if __name__ == "__main__":
                     configs = {
                             'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
                             'spark.debug.maxToStringFields': '100',
-
                             # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                             # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
-                            # 'spark.app.name': 'MinHashLSH',
                             'spark.driver.memory': '64g',
-                            # 'spark.executor.memory': '2g',
-                            # 'spark.submit.deployMode': 'client',
                         })
         else:
             conf = SparkConf()
