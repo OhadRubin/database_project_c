@@ -28,7 +28,7 @@ def examine_cluster(use_ray=False):
         spark = raydp.init_spark(
                 app_name="MinHashLSH",
                 num_executors=200,
-                executor_cores=100,
+                executor_cores=1,
                 executor_memory="2g",
                 configs = {
 
