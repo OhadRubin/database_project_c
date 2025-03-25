@@ -272,72 +272,7 @@ def find_matching_pairs(candidate_pairs_rdd, similarity_threshold=0.8):
 def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, permutations):
     return corpus_rdd.map(lambda x: (x[0], hash_content(x[1], num_perm, ngram_size, min_ngram_size, permutations)))
 
-# def deduplicate(df, args):
-def minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold):
-    B, R = optimal_param(threshold, num_perm)
-    log.info(f"Using optimal parameters: {B=}, {R=}")
-    PERMUTATIONS = np.array(
-        [
-            (
-                RNG.randint(1, MERSENNE_PRIME, dtype=np.uint64),
-                RNG.randint(0, MERSENNE_PRIME, dtype=np.uint64),
-            )
-            for _ in range(num_perm)
-        ],
-        dtype=np.uint64,
-    ).T
-    
-    # Get original record count
-    original_count = df.count()
-    
-    df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
-    records = df.select("__id__", column).rdd
-    corpus_rdd = records.repartition(num_perm * 2).cache()
-    
-    # Generate minhash signatures
-    minhash_signatures = generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, PERMUTATIONS)
-    
-    # Create Document objects
-    documents_rdd = minhash_signatures.map(lambda x: Document(x[0], x[1]))
-    
-    # Create all document pairs (cartesian product)
-    cartesian_pairs = documents_rdd.cartesian(documents_rdd)
-    
-    # Filter to only keep pairs where doc1.key < doc2.key to avoid duplicates
-    ordered_pairs = cartesian_pairs.filter(lambda pair: pair[0].key < pair[1].key)
-    
-    # Create DocumentPair objects
-    document_pairs = ordered_pairs.map(lambda pair: DocumentPair(pair[0], pair[1]))
-    
-    # Calculate similarity for each pair
-    pairs_with_similarity = document_pairs.map(
-        lambda pair: SimilarityPair(pair, calculate_pair_similarity(pair))
-    )
-    
-    # Filter pairs that exceed similarity threshold
-    matching_pairs = pairs_with_similarity.filter(
-        lambda sim_pair: sim_pair.similarity >= threshold
-    )
-    
-    # Create edges for connected components
-    edges = matching_pairs.flatMap(
-        lambda sim_pair: [(sim_pair.pair.doc1.key, sim_pair.pair.doc2.key)]
-    ).distinct().cache()
-    
-    # Count pairs for logging
-    pair_count = matching_pairs.count()
-    log.info(f"Found {pair_count} similar pairs")
-    
-    # Deduplicate using connected components
-    if pair_count > 0:
-        deduplicated_df, duplicate_count = deduplicate(edges, df)
-    else:
-        # No duplicates found
-        log.info("No duplicates found")
-        deduplicated_df = df.drop("__id__")
-        duplicate_count = 0
-    
-    return deduplicated_df, duplicate_count
+
     
 def minhash_lsh(df, column, num_perm, ngram_size, min_ngram_size, threshold):
     B, R = optimal_param(threshold, num_perm)
@@ -445,7 +380,7 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 
 
-from src.brute_force_clusters import brute_force_clusters
+# from src.brute_force_clusters import brute_force_clusters
 if __name__ == "__main__":
 
     # Check if output directory exists, if not create it
@@ -494,10 +429,8 @@ if __name__ == "__main__":
     original_count = df.count()
     
     start_time = time.time()
-    if args.implementation == "minhash_lsh":
-        df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-    elif args.implementation == "minhash":
-        df, duplicate_count = minhash(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    assert args.implementation == "minhash_lsh"
+    df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
     dedup_count = original_count-duplicate_count
     log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
     dedup_time = time.time() - start_time
