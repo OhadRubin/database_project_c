@@ -294,27 +294,48 @@ def minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold):
     records = df.select("__id__", column).rdd
     corpus_rdd = records.repartition(num_perm * 2).cache()
     
-    minhash_corpus_rdd = generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, PERMUTATIONS)
+    # Generate minhash signatures
+    minhash_signatures = generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, PERMUTATIONS)
     
+    # Create Document objects
+    documents_rdd = minhash_signatures.map(lambda x: Document(x[0], x[1]))
     
-    cartesian_pairs = minhash_corpus_rdd.cartesian(minhash_corpus_rdd)
+    # Create all document pairs (cartesian product)
+    cartesian_pairs = documents_rdd.cartesian(documents_rdd)
     
-    
-    # Create DocumentPair objects ensuring doc1.key < doc2.key to eliminate duplicates
+    # Filter to only keep pairs where doc1.key < doc2.key to avoid duplicates
     ordered_pairs = cartesian_pairs.filter(lambda pair: pair[0].key < pair[1].key)
+    
+    # Create DocumentPair objects
     document_pairs = ordered_pairs.map(lambda pair: DocumentPair(pair[0], pair[1]))
     
-    candidate_pairs = document_pairs.cache()
+    # Calculate similarity for each pair
+    pairs_with_similarity = document_pairs.map(
+        lambda pair: SimilarityPair(pair, calculate_pair_similarity(pair))
+    )
     
-    # Count and print the number of comparisons for monitoring
-    comparison_count = candidate_pairs.count()
-    print(f"Number of comparisons: {comparison_count}")
+    # Filter pairs that exceed similarity threshold
+    matching_pairs = pairs_with_similarity.filter(
+        lambda sim_pair: sim_pair.similarity >= threshold
+    )
     
-    edges = None
-    deduplicated_df, duplicate_count = deduplicate(edges, df)
-    dedup_count = deduplicated_df.count()
-    duplicate_count = original_count - dedup_count
+    # Create edges for connected components
+    edges = matching_pairs.flatMap(
+        lambda sim_pair: [(sim_pair.pair.doc1.key, sim_pair.pair.doc2.key)]
+    ).distinct().cache()
     
+    # Count pairs for logging
+    pair_count = matching_pairs.count()
+    log.info(f"Found {pair_count} similar pairs")
+    
+    # Deduplicate using connected components
+    if pair_count > 0:
+        deduplicated_df, duplicate_count = deduplicate(edges, df)
+    else:
+        # No duplicates found
+        log.info("No duplicates found")
+        deduplicated_df = df.drop("__id__")
+        duplicate_count = 0
     
     return deduplicated_df, duplicate_count
     
