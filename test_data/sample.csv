@@ -1,4 +1,4 @@
-id,content
+id,text
 1,"This is a sample document about databases. It discusses SQL, NoSQL, and database management."
 2,"A document about SQL databases and their management. SQL is used for relational databases."
 3,"NoSQL databases are becoming popular for certain applications. They scale horizontally."

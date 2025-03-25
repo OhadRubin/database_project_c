@@ -23,6 +23,8 @@ class BenchmarkRun(Base):
     min_ngram_size = Column(Integer)
     num_perm = Column(Integer)
     execution_time = Column(Float)
+    limit_files = Column(Integer, nullable=True)
+    total_size_gb = Column(Float, nullable=True)
     
     # Relationships
     resource_metrics = relationship("ResourceMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
@@ -34,7 +36,7 @@ class BenchmarkRun(Base):
     @classmethod
     def create_from_spark_run(cls, session, input_file, output_dir, duplicate_count, record_count, 
                             threshold, ngram_size, min_ngram_size, num_perm, execution_time, 
-                            num_nodes=1, notes=None, implementation="pyspark"):
+                            num_nodes=1, notes=None, implementation="pyspark", limit_files=None, total_size_gb=None):
         """
         Create a new BenchmarkRun entry from a PySpark deduplication run
         
@@ -66,6 +68,10 @@ class BenchmarkRun(Base):
             Additional notes about the run
         implementation : str, optional
             Implementation type, defaults to "pyspark"
+        limit_files : int, optional
+            Number of files processed (if limited)
+        total_size_gb : float, optional
+            Total size of processed files in GB
             
         Returns:
         --------
@@ -84,7 +90,9 @@ class BenchmarkRun(Base):
             min_ngram_size=min_ngram_size,
             num_perm=num_perm,
             execution_time=execution_time,
-            notes=notes
+            notes=notes,
+            limit_files=limit_files,
+            total_size_gb=total_size_gb
         )
         session.add(run)
         session.commit()
@@ -92,7 +100,7 @@ class BenchmarkRun(Base):
     
     @classmethod
     def create_from_args(cls, session, args, duplicate_count, record_count, execution_time, 
-                       num_nodes=1, notes=None, implementation="pyspark"):
+                       num_nodes=1, notes=None, implementation="pyspark", limit_files=None, total_size_gb=None):
         """
         Create a new BenchmarkRun entry from command line args and results
         
@@ -114,6 +122,10 @@ class BenchmarkRun(Base):
             Additional notes about the run
         implementation : str, optional
             Implementation type, defaults to "pyspark"
+        limit_files : int, optional
+            Number of files processed (if limited)
+        total_size_gb : float, optional
+            Total size of processed files in GB
             
         Returns:
         --------
@@ -132,7 +144,9 @@ class BenchmarkRun(Base):
             min_ngram_size=args.min_ngram_size,
             num_perm=args.num_perm,
             execution_time=execution_time,
-            notes=notes
+            notes=notes,
+            limit_files=limit_files if limit_files is not None else args.limit_files,
+            total_size_gb=total_size_gb
         )
         session.add(run)
         session.commit()

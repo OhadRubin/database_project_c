@@ -2,9 +2,7 @@ import os
 
 os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
 os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
-import hashlib
-import re
-import struct
+
 import sys
 from itertools import tee
 from logging import Logger
@@ -17,15 +15,17 @@ from pyspark import SparkConf
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from scipy.integrate import quad as integrate
+import glob
 
 SEED = 42
-NON_ALPHA = re.compile("[^A-Za-z_0-9]")
+
 RNG = np.random.RandomState(SEED)
 MAX_HASH = np.uint64((1 << 32) - 1)
 MERSENNE_PRIME = np.uint64((1 << 61) - 1)
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from src.db import init_db, get_session, BenchmarkRun
+from src.utils import tokenize, sha1_hash32, hash_content
 # requirements: pyspark
 
 # Connected Components in MapReduce and Beyond
@@ -55,64 +55,6 @@ def small_star_reduce(group):
     return [(n, minimum) for n in nodes if n != minimum]
 
 
-def ngrams(sequence: List[str], n: int, min_ngram_size: int = 5) -> Iterable:
-    """
-    Code taken from NLTK, without padding.
-
-    Parameters
-    ----------
-    sequence : list
-        The sequence of items to be converted into n-grams.
-    n : int
-        The order of the n-grams to be extracted.
-    min_ngram_size : int
-        The minimum number of items in the sequence to generate n-grams.
-
-    Returns
-    -------
-    Iterable
-        The n-grams generated from the sequence.
-
-    Examples
-    --------
-    >>> list(ngrams(['a', 'b', 'c', 'd'], 2))
-    [('a', 'b'), ('b', 'c'), ('c', 'd')]
-    >>> list(ngrams(['a', 'b', 'c', 'd'], 3))
-    [('a', 'b', 'c'), ('b', 'c', 'd')]
-    """
-    if len(sequence) < min_ngram_size:
-        return []
-
-    iterables = tee(sequence, n)
-    for i, sub_iterable in enumerate(iterables):
-        for _ in range(i):
-            next(sub_iterable, None)
-    return zip(*iterables)
-
-
-def sha1_hash32(data):
-    """
-    Directly taken from datasketch package to avoid dependency.
-
-    Parameters
-    ----------
-    data : bytes
-
-    Returns
-    -------
-    int
-        The first 4 bytes (32 bits) of the SHA1 hash of the input data.
-
-    Examples
-    --------
-    >>> sha1_hash32(b"hello")
-    499578026
-    >>> bin(sha1_hash32(b"hello"))
-    '0b11101110001101111010010101010'
-    >>> sha1_hash32(b"hello world").bit_length()
-    30
-    """
-    return struct.unpack("<I", hashlib.sha1(data).digest()[:4])[0]
 
 
 def generate_hash_values(
@@ -149,19 +91,9 @@ def generate_hash_values(
     List[Tuple[int, bytes, int]]
         The list of (band_idx, hash value, idx) for the document.
     """
-    hashvalues = np.ones(num_perm, dtype=np.uint64) * MAX_HASH
-    tokens = {
-        " ".join(t)
-        for t in ngrams(NON_ALPHA.split(content), ngram_size, min_ngram_size)
-    }
-    hv = np.array(
-        [sha1_hash32(token.encode("utf-8")) for token in tokens], dtype=np.uint64
-    )
-    a, b = permutations
-    phv = np.bitwise_and(
-        ((hv * np.tile(a, (len(hv), 1)).T).T + b) % MERSENNE_PRIME, MAX_HASH
-    )
-    hashvalues = np.vstack([phv, hashvalues]).min(axis=0)
+
+    hashvalues = hash_content(content, num_perm, ngram_size, min_ngram_size, permutations)
+    
     Hs = [bytes(hashvalues[start:end].byteswap().data) for start, end in hashranges]
     return [(band_idx, H, idx) for band_idx, H in enumerate(Hs)]
 
@@ -253,8 +185,140 @@ def generate_edges(nodes: List[int]) -> List[Tuple[int, int]]:
     return [(n, min_node) for n in nodes if n != min_node]
 
 
+def jaccard_hash(hashvalues_a, hashvalues_b) -> float:
+    return float(np.count_nonzero(hashvalues_a == hashvalues_b)) / float(
+            len(hashvalues_a)
+        )
+
+class Document:
+    def __init__(self, key, hashvalues):
+        self.key = key
+        self.hashvalues = hashvalues
+
+class DocumentPair:
+    def __init__(self, doc1, doc2):
+        self.doc1 = doc1
+        self.doc2 = doc2
+
+class SimilarityPair:
+    def __init__(self, pair, similarity):
+        self.pair = pair
+        self.similarity = similarity
+
+def calculate_pair_similarity(doc_pair):
+    """Calculate Jaccard similarity between document pair."""
+    return jaccard_hash(doc_pair.doc1.hashvalues, doc_pair.doc2.hashvalues)
+
+def deduplicate(edges, df):
+    a = edges
+    while True:
+        b = (
+            a.flatMap(large_star_map)
+            .groupByKey()
+            .flatMap(large_star_reduce)
+            .distinct()
+            .cache()
+        )
+        a = (
+            b.map(small_star_map)
+            .groupByKey()
+            .flatMap(small_star_reduce)
+            .distinct()
+            .cache()
+        )
+        changes = a.subtract(b).union(b.subtract(a)).collect()
+        if len(changes) == 0:
+            break
+
+    results = a.collect()
+    if len(results) == 0:
+        log.info("No components found.")
+        return df, 0
+        
+    # Count the distinct duplicate groups
+    duplicate_sets = len(set(r[1] for r in results))
+    log.info(f"Found {duplicate_sets} distinct duplicate sets")
+
+    components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
+        ["component", "__id__"]
+    )
+    components.show()
+    df = df.join(components, on="__id__", how="left")
+    deduplicated_df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
+    duplicates_count = df.count() - deduplicated_df.count()
+    return deduplicated_df, duplicates_count
+
+
+
+def find_matching_pairs(candidate_pairs_rdd, similarity_threshold=0.8):
+    """Find pairs with similarity above threshold."""
+    # Calculate similarity scores for each pair
+    pairs_with_similarity = candidate_pairs_rdd.map(
+        lambda pair: SimilarityPair(pair, calculate_pair_similarity(pair))
+    )
+
+    # Filter pairs above similarity threshold
+    matching_pairs = pairs_with_similarity.filter(
+        lambda sim_pair: sim_pair.similarity > similarity_threshold
+    )
+
+    # Extract just the document keys from the pairs
+    document_pairs = matching_pairs.map(
+        lambda sim_pair: {sim_pair.pair.doc1.key, sim_pair.pair.doc2.key}
+    )
+
+    return document_pairs
+
+def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, permutations):
+    return corpus_rdd.map(lambda x: (x[0], hash_content(x[1], num_perm, ngram_size, min_ngram_size, permutations)))
+
 # def deduplicate(df, args):
-def deduplicate(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
+def minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold):
+    B, R = optimal_param(threshold, num_perm)
+    log.info(f"Using optimal parameters: {B=}, {R=}")
+    PERMUTATIONS = np.array(
+        [
+            (
+                RNG.randint(1, MERSENNE_PRIME, dtype=np.uint64),
+                RNG.randint(0, MERSENNE_PRIME, dtype=np.uint64),
+            )
+            for _ in range(num_perm)
+        ],
+        dtype=np.uint64,
+    ).T
+    
+    # Get original record count
+    original_count = df.count()
+    
+    df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
+    records = df.select("__id__", column).rdd
+    corpus_rdd = records.repartition(num_perm * 2).cache()
+    
+    minhash_corpus_rdd = generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, PERMUTATIONS)
+    
+    
+    cartesian_pairs = minhash_corpus_rdd.cartesian(minhash_corpus_rdd)
+    
+    
+    # Create DocumentPair objects ensuring doc1.key < doc2.key to eliminate duplicates
+    ordered_pairs = cartesian_pairs.filter(lambda pair: pair[0].key < pair[1].key)
+    document_pairs = ordered_pairs.map(lambda pair: DocumentPair(pair[0], pair[1]))
+    
+    candidate_pairs = document_pairs.cache()
+    
+    # Count and print the number of comparisons for monitoring
+    comparison_count = candidate_pairs.count()
+    print(f"Number of comparisons: {comparison_count}")
+    
+    edges = None
+    deduplicated_df, duplicate_count = deduplicate(edges, df)
+    dedup_count = deduplicated_df.count()
+    duplicate_count = original_count - dedup_count
+    
+    
+    return deduplicated_df, duplicate_count
+    
+def minhash_lsh(df, column, num_perm, ngram_size, min_ngram_size, threshold):
     B, R = optimal_param(threshold, num_perm)
     log.info(f"Using optimal parameters: {B=}, {R=}")
     HASH_RANGES = [(i * R, (i + 1) * R) for i in range(B)]
@@ -293,51 +357,16 @@ def deduplicate(spark, df, column, num_perm, ngram_size, min_ngram_size, thresho
         .distinct()
         .cache()
     )
-
-    a = edges
-    while True:
-        b = (
-            a.flatMap(large_star_map)
-            .groupByKey()
-            .flatMap(large_star_reduce)
-            .distinct()
-            .cache()
-        )
-        a = (
-            b.map(small_star_map)
-            .groupByKey()
-            .flatMap(small_star_reduce)
-            .distinct()
-            .cache()
-        )
-        changes = a.subtract(b).union(b.subtract(a)).collect()
-        if len(changes) == 0:
-            break
-
-    results = a.collect()
-    if len(results) == 0:
-        log.info("No components found.")
-        return df, 0
-        
-    # Count the distinct duplicate groups
-    duplicate_sets = len(set(r[1] for r in results))
-    log.info(f"Found {duplicate_sets} distinct duplicate sets")
-
-    components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
-        ["component", "__id__"]
-    )
-    components.show()
-    df = df.join(components, on="__id__", how="left")
-    deduplicated_df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
-    
     # Count records after deduplication
+    deduplicated_df, duplicate_count = deduplicate(edges, df)
     dedup_count = deduplicated_df.count()
     duplicate_count = original_count - dedup_count
-    log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
+    
     
     return deduplicated_df, duplicate_count
 
-import glob
+
+
 def create_parser():
     import argparse
 
@@ -370,6 +399,9 @@ def create_parser():
     parser.add_argument(
         "--limit_files", type=int, default=None, help="Limit the number of files to process"
     )
+    parser.add_argument(
+        "--implementation", type=str, default="minhash_lsh", help="Implementation to use"
+    )
     args = parser.parse_args()
 
     # Ensure at least one input source is provided
@@ -392,6 +424,7 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 
 
+from src.brute_force_clusters import brute_force_clusters
 if __name__ == "__main__":
 
     # Check if output directory exists, if not create it
@@ -440,7 +473,12 @@ if __name__ == "__main__":
     original_count = df.count()
     
     start_time = time.time()
-    df, duplicate_count = deduplicate(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    if args.implementation == "minhash_lsh":
+        df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    elif args.implementation == "minhash":
+        df, duplicate_count = minhash(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    dedup_count = original_count-duplicate_count
+    log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
     dedup_time = time.time() - start_time
     print(f"Deduplication took {dedup_time/60:.2f} minutes")
     
@@ -455,12 +493,16 @@ if __name__ == "__main__":
     record_count = df.count()
     total_time = dedup_time + write_time
     
-    # Log benchmark data if enabled
     try:
-        
         
         engine = init_db()
         session = get_session(engine)
+        
+        # Calculate total size if using input files with limit
+        total_size_gb = None
+        if args.input_file and args.limit_files is not None:
+            input_files = glob.glob(args.input_file)[:args.limit_files]
+            total_size_gb = get_total_size_gb(input_files)
         
         benchmark = BenchmarkRun.create_from_args(
             session=session,
@@ -468,7 +510,9 @@ if __name__ == "__main__":
             duplicate_count=duplicate_count,
             record_count=record_count,
             execution_time=total_time,
-            notes=f"Auto-tracked benchmark"
+            notes=args.implementation,
+            limit_files=args.limit_files,
+            total_size_gb=total_size_gb
         )
         
         print(f"Benchmark data saved with ID: {benchmark.id}")
