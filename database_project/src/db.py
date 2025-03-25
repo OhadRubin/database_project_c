@@ -283,10 +283,11 @@ class AccuracyMetric(Base):
 def init_db(db_path=None):
     """Initialize the database, create tables if they don't exist"""
     if db_path is None:
-        
-        if :
+        if "POSTGRES_ADDRESS" in os.environ:
+            print("Using PostgreSQL")
             db_path = os.environ["POSTGRES_ADDRESS"]
         else:
+            print("Using SQLite")
             db_path = 'sqlite:///benchmark_results.db'
     engine = create_engine(db_path)
     Base.metadata.create_all(engine)
