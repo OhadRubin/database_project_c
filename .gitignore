@@ -1,0 +1,38 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database files
+*.db
+
+# Cursor files
+.cursor/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+
+# Environment
+.env
+venv/
+env/
+
+# Distribution/packaging
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Local development settings
+local_settings.py
+
+# System files
+.DS_Store
+Thumbs.db
