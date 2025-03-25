@@ -1,6 +1,19 @@
+# 
+# sudo apt-get install default-jdk -y && python3.10 -m pip install pyspark
+# git clone https://github.com/OhadRubin/database_project_c
+# python3.10 -m pip install raydp
+
 import os
 from pyspark.sql import SparkSession
 import time
+import ray
+import raydp
+
+# ray start --head
+# curl -s https://checkip.amazonaws.com
+# ray start --address='master_id:6379'
+ray.init(address='auto')
+
 
 # Set environment variables to ensure consistent Python version
 # This needs to be set before SparkSession is created
@@ -10,15 +23,26 @@ os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
 from pyspark import SparkConf
 def examine_cluster():
     # Initialize SparkSession with specific configurations for multi-node setup
-    
-    conf = SparkConf()
-    conf.set("spark.app.name", "MinHashLSH")
-    conf.set("spark.debug.maxToStringFields", "100")
-    conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-    conf.set("spark.driver.memory", "64g")
-    conf.set("spark.executor.memory", "64g")
-    conf.set("spark.submit.deployMode", "client")
-    spark = SparkSession.builder.config(conf=conf).getOrCreate()
+    spark = raydp.init_spark(
+                configs = {
+
+                    # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
+                    # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
+                    'spark.app.name': 'MinHashLSH',
+                    'spark.debug.maxToStringFields': '100',
+                    'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                    'spark.driver.memory': '64g',
+                    'spark.executor.memory': '64g',
+                    'spark.submit.deployMode': 'client',
+                })
+    # conf = SparkConf()
+    # conf.set("spark.app.name", "MinHashLSH")
+    # conf.set("spark.debug.maxToStringFields", "100")
+    # conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+    # conf.set("spark.driver.memory", "64g")
+    # conf.set("spark.executor.memory", "64g")
+    # conf.set("spark.submit.deployMode", "client")
+    # spark = SparkSession.builder.config(conf=conf).getOrCreate()
     
     # Get Spark context
     sc = spark.sparkContext
