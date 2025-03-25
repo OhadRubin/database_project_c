@@ -13,7 +13,7 @@ spark = SparkSession.builder.appName("read_json") \
 # Option 1: Download using requests and then read
 url_tempalte = 'https://huggingface.co/datasets/allenai/c4/resolve/1ddc917116b730e1859edef32896ec5c16be51d0/en/c4-train.{index:05d}-of-01024.json.gz'
 
-files_to_download = [url_tempalte.format(index=i) for i in range(160)]
+files_to_download = [url_tempalte.format(index=i) for i in range(40)]
 
 async def download_file(client, url, output_path):
     if output_path.exists():

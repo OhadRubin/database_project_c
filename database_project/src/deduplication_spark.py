@@ -385,12 +385,33 @@ if __name__ == "__main__":
 
     # Check if output directory exists, if not create it
     args = create_parser()
-    conf = SparkConf()
-    conf.set("spark.app.name", "MinHashLSH")
-    conf.set("spark.debug.maxToStringFields", "100")
-    conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-    conf.set("spark.driver.memory", "64g")
-    conf.set("spark.executor.memory", "64g")
+    if args.use_ray:
+        import ray
+        import raydp
+        ray.init(address='auto')
+        spark = raydp.init_spark(
+                app_name="MinHashLSH",
+                num_executors=200,
+                executor_cores=1, # how many tasks the executor can run in parallel
+                executor_memory="2g",
+                configs = {
+                        'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                        'spark.debug.maxToStringFields': '100',
+
+                        # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
+                        # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
+                        # 'spark.app.name': 'MinHashLSH',
+                        # 'spark.driver.memory': '64g',
+                        # 'spark.executor.memory': '2g',
+                        # 'spark.submit.deployMode': 'client',
+                    })
+    else:
+        conf = SparkConf()
+        conf.set("spark.app.name", "MinHashLSH")
+        conf.set("spark.debug.maxToStringFields", "100")
+        conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+        conf.set("spark.driver.memory", "64g")
+        conf.set("spark.executor.memory", "64g")
 
     spark = SparkSession.builder.config(conf=conf).getOrCreate()
     log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore

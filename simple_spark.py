@@ -28,15 +28,15 @@ def examine_cluster(use_ray=False):
         spark = raydp.init_spark(
                 app_name="MinHashLSH",
                 num_executors=200,
-                executor_cores=1,
+                executor_cores=1, # how many tasks the executor can run in parallel
                 executor_memory="2g",
                 configs = {
+                        'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                        'spark.debug.maxToStringFields': '100',
 
                         # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                         # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
                         # 'spark.app.name': 'MinHashLSH',
-                        # 'spark.debug.maxToStringFields': '100',
-                        # 'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
                         # 'spark.driver.memory': '64g',
                         # 'spark.executor.memory': '2g',
                         # 'spark.submit.deployMode': 'client',
