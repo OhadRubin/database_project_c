@@ -1,330 +1,390 @@
 import os
-
-os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
-os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
 import numpy as np
+import pandas as pd # Used for type hints, not core logic
 from pyspark import SparkConf
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, Row, DataFrame
 from pyspark.sql import functions as F
-# from pyspark.mllib.feature import HashingTF, IDF
+import logging
+import math
+import time
+from functools import reduce
+from typing import Dict, Any, Iterator, List, Tuple, Optional, Set
 
-from pyspark.mllib.linalg import Vectors
+# Import scikit-learn components
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
+from sklearn.decomposition import TruncatedSVD
+from sklearn.pipeline import Pipeline
 
-conf = SparkConf()
-conf.set("spark.app.name", "MinHashLSH")
-conf.set("spark.debug.maxToStringFields", "100")
-conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-conf.set("spark.driver.memory", "64g")
-conf.set("spark.executor.memory", "64g")
-spark = SparkSession.builder.config(conf=conf).getOrCreate()
-
-
-from splearn.rdd import ArrayRDD
-from splearn.feature_extraction.text import SparkCountVectorizer, SparkHashingVectorizer
-from splearn.feature_extraction.text import SparkTfidfTransformer
-from splearn.decomposition import SparkTruncatedSVD
-from splearn.pipeline import SparkPipeline
+# Import Spark ML components
+from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
+from pyspark.ml.clustering import KMeans as SparkKMeans
+from pyspark.storagelevel import StorageLevel
 
 
 
-# from pyspark.mllib.feature import HashingTF, IDF
 
+# --- Scikit-learn Pipeline Definition ---
+class NumberNormalizingVectorizer(TfidfVectorizer):
+    """Custom TF-IDF Vectorizer that replaces numbers with a token."""
+    def build_tokenizer(self):
+        tokenize = super().build_tokenizer()
+        return lambda doc: list(self._number_normalizer(tokenize(doc)))
+    def _number_normalizer(self, tokens: List[str]) -> Iterator[str]:
+        for token in tokens:
+            if any(char.isdigit() for char in token): yield "#NUMBER";
+            else: yield token
 
-import pandas as pd
+def get_sklearn_feature_pipeline(n_components: int, random_seed: int) -> Pipeline:
+    """Creates the TF-IDF -> SVD pipeline."""
+    stop_words = set(ENGLISH_STOP_WORDS.union(["#NUMBER"]))
+    pipeline = Pipeline([
+        ('tfidf', NumberNormalizingVectorizer(
+            stop_words=list(stop_words), max_features=10000, max_df=0.95, min_df=2
+        )),
+        ('svd', TruncatedSVD(n_components=n_components, random_state=random_seed))
+    ])
+    return pipeline
 
+# --- TF-IDF Vectorization Function (using sklearn fit/transform) ---
+# Globals for Lazy Initialization on Executors for the pipeline transform part
+EXECUTOR_PIPELINE: Optional[Pipeline] = None
 
+def _transform_partition_sklearn(
+    rows_iter: Iterator[Row],
+    bc_pipeline_broadcast: Any, # Spark Broadcast object
+    column: str,
+    batch_size: int
+    ) -> Iterator[Tuple[int, List[float]]]:
+    """Helper function run by mapPartitions to transform data using broadcasted sklearn pipeline."""
+    global EXECUTOR_PIPELINE
 
-# num_nodes=1
-# df = spark.read.option("header", "true").csv("/home/ohadr/database_project_c/test_data/sample.csv")
+    # Lazy init of model from broadcast *once per worker*
+    if EXECUTOR_PIPELINE is None:
+        pid = os.getpid()
+        try:
+            # print(f"EXECUTOR ({pid}): Initializing pipeline from broadcast {bc_pipeline_broadcast.id}") # Debug
+            EXECUTOR_PIPELINE = bc_pipeline_broadcast.value
+        except Exception as e:
+            print(f"EXECUTOR ({pid}): ERROR initializing pipeline: {e}") # Use print as logger might not be setup
+            raise RuntimeError("Executor pipeline initialization failed") from e
 
+    # Process partition in batches
+    batch_texts = []
+    batch_ids = []
+    for row in rows_iter:
+        doc_id = row['__id__']
+        text = row[column]
+        if text: # Ensure text is not None or empty
+            batch_texts.append(text)
+            batch_ids.append(doc_id)
 
-def tfidf_vec(df, column, n_components=128):
-    # input: spark dataframe with a column of text that is named column
-    # output: spark dataframe with a column of text that is named column and a column of ids that is named __id__
-    # and a vector column of tfidf vectors of dimension 128 values that is named tfidf
-    df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
-    records = df.select("__id__", column).rdd
-    records = records.repartition(256 * 2).cache()
-    text_rdd = records.map(lambda x: x[1])
-    id_rdd = records.map(lambda x: x[0])
+        if len(batch_texts) >= batch_size:
+            if batch_texts:
+                try:
+                    features = EXECUTOR_PIPELINE.transform(batch_texts)
+                    for i, doc_id_in_batch in enumerate(batch_ids):
+                        yield (doc_id_in_batch, features[i].tolist())
+                except Exception as e:
+                     print(f"EXECUTOR ({os.getpid()}): ERROR transforming batch: {e}") # Log error
+            batch_texts, batch_ids = [], [] # Reset batch
 
-    X_rdd = ArrayRDD(text_rdd)
+    # Process final partial batch
+    if batch_texts:
+        try:
+            features = EXECUTOR_PIPELINE.transform(batch_texts)
+            for i, doc_id_in_batch in enumerate(batch_ids):
+                yield (doc_id_in_batch, features[i].tolist())
+        except Exception as e:
+            print(f"EXECUTOR ({os.getpid()}): ERROR transforming final batch: {e}")
 
-    spark_vectorizer = SparkCountVectorizer()
+def run_sklearn_vectorization(
+    spark_session: SparkSession,
+    df: DataFrame,
+    column: str,
+    n_components: int,
+    random_seed: int = 42,
+    max_sample_fit: int = 50000,
+    map_partitions_batch_size: int = 100
+    ) -> DataFrame:
+    """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
+    print(f"Starting Sklearn Vectorization: Components={n_components}, SampleFit={max_sample_fit}, BatchSize={map_partitions_batch_size}")
+    fit_start_time = time.time()
 
-    dist_pipeline = SparkPipeline((
-        ('vect', spark_vectorizer),
-        ('tfidf', SparkTfidfTransformer()),
-        ('pca', SparkTruncatedSVD(n_components=n_components))
-    ))
+    # Ensure __id__ exists, cache input
+    if "__id__" not in df.columns:
+        df_with_id = df.withColumn("__id__", F.monotonically_increasing_id())
+    else:
+        df_with_id = df
+    df_with_id.persist(StorageLevel.MEMORY_AND_DISK) # Persist input for sampling and joining later
+    df_count = df_with_id.count()
+    print(f"Input count: {df_count}")
 
-    pipeline = dist_pipeline.fit(X_rdd)  # SparseRDD
-    result_dist = pipeline.transform(X_rdd)  # SparseRDD
-    vector_rdd = result_dist.unblock()
-    
-    # Zip the IDs with the vectors
-    recon_rdd = id_rdd.zip(vector_rdd)
-    
-    # Convert RDD to DataFrame
-    from pyspark.ml.linalg import Vectors as MLVectors
+    # Fit pipeline on sample
+    sample_size = min(df_count, max_sample_fit)
+    text_sample_rows = df_with_id.select(column).limit(sample_size).collect()
+    text_sample = [row[column] for row in text_sample_rows if row and row[column]]
+    if not text_sample: raise ValueError("No non-empty text found in sample for fitting.")
+    print(f"Fitting sklearn pipeline on {len(text_sample)} documents...")
+    pipeline = get_sklearn_feature_pipeline(n_components, random_seed)
+    pipeline.fit(text_sample)
+    print(f"Pipeline fitting took {time.time() - fit_start_time:.2f}s.")
+
+    # Broadcast pipeline
+    bc_pipeline = spark_session.sparkContext.broadcast(pipeline)
+    print(f"Broadcasted fitted pipeline (ID: {bc_pipeline.id}).")
+
+    # Define schema for output RDD
     from pyspark.sql.types import StructType, StructField, LongType, ArrayType, DoubleType
-    
-    # Define schema for the DataFrame
-    schema = StructType([
+    vector_schema = StructType([
         StructField("__id__", LongType(), False),
         StructField("tfidf_features", ArrayType(DoubleType()), False)
     ])
-    
-    # Create a DataFrame with the ID and feature vectors
-    vector_df = spark.createDataFrame(
-        recon_rdd.map(lambda x: (x[0], x[1].tolist())),
-        schema
+
+    # Transform full dataset
+    print("Applying distributed transformation...")
+    transform_start_time = time.time()
+    vectorized_rdd = df_with_id.select("__id__", column).rdd.mapPartitions(
+        lambda rows_iter: _transform_partition_sklearn(rows_iter, bc_pipeline, column, map_partitions_batch_size)
     )
-    vector_df.show()
-    # # vector_df.collect()
-    # vector_df.show()
-    # # Convert array to ML Vector for easier use with MLlib
-    # from pyspark.sql.functions import udf
-    # from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
-    
-    # # UDF to convert array to Vector
-    # array_to_vector = udf(lambda x: MLVectors.dense(x), VectorUDT())
-    
-    # # Apply the UDF to create the vector column
-    # vector_df = vector_df.withColumn("tfidf", array_to_vector("tfidf_features")).drop("tfidf_features")
-    
-    # # Join back with the original dataframe
-    # result_df = df.join(vector_df, on="__id__", how="inner").cache()
-    
-    # return result_df
+    vector_df = spark_session.createDataFrame(vectorized_rdd, schema=vector_schema)
+
+    print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
+    df_with_id.unpersist() # Unpersist input now
+    return vector_df
+
+# --- Duplicate Finding Function (Driver-Side - SCALES POORLY) ---
+def find_duplicates_within_cluster_driver(
+    cluster_df: DataFrame,
+    vector_column: str,
+    threshold: float,
+    id_col: str = "__id__"
+    ) -> Tuple[Set[int], int]:
+    """Finds duplicates within a cluster by collecting vectors to the driver."""
+    print(f"Executing find_duplicates_within_cluster_driver - collects data to driver!")
+    collect_start_time = time.time()
+    try:
+        # Collect IDs and vectors for the current cluster
+        id_vector_list = cluster_df.select(id_col, vector_column).collect()
+        num_vectors = len(id_vector_list)
+        print(f"Collected {num_vectors} vectors to driver (took {time.time() - collect_start_time:.2f}s).")
+        if num_vectors <= 1: return set(), 0 # Base case: no duplicates possible
+    except Exception as e:
+        print(f"Failed to collect vectors for cluster: {e}")
+        return set(), 0 # Return empty if collection fails
+
+    id_to_vector = {row[id_col]: np.array(row[vector_column], dtype=np.float64) for row in id_vector_list}
+    id_list = list(id_to_vector.keys())
+
+    # Compute similarities efficiently using sklearn if available and dense
+    # Otherwise, fallback to loop (as in original)
+    try:
+        from sklearn.metrics.pairwise import cosine_similarity
+        vectors_matrix = np.array([id_to_vector[id] for id in id_list])
+        print("Calculating similarity matrix using sklearn...")
+        sim_matrix = cosine_similarity(vectors_matrix)
+        # Set diagonal to 0 and find pairs above threshold
+        np.fill_diagonal(sim_matrix, 0)
+        indices_row, indices_col = np.where(sim_matrix >= threshold)
+        duplicate_pairs = set(tuple(sorted((id_list[r], id_list[c]))) for r, c in zip(indices_row, indices_col) if r < c)
+        print(f"Similarity matrix calculation complete. Found {len(duplicate_pairs)} pairs.")
+    except ImportError:
+         print("sklearn not available for pairwise similarity, falling back to loop.")
+         duplicate_pairs = set()
+         for i in range(num_vectors):
+             doc_id1 = id_list[i]; vector1 = id_to_vector[doc_id1]; norm1 = np.linalg.norm(vector1)
+             if norm1 == 0: continue
+             for j in range(i + 1, num_vectors):
+                 doc_id2 = id_list[j]; vector2 = id_to_vector[doc_id2]; norm2 = np.linalg.norm(vector2)
+                 if norm2 == 0: continue
+                 similarity = np.dot(vector1, vector2) / (norm1 * norm2)
+                 if similarity >= threshold: duplicate_pairs.add(tuple(sorted((doc_id1, doc_id2))))
+         print(f"Pairwise loop complete. Found {len(duplicate_pairs)} pairs.")
+
+    # Build connected components to find groups and identify IDs to remove
+    adj = {doc_id: [] for doc_id in id_list}
+    for id1, id2 in duplicate_pairs: adj[id1].append(id2); adj[id2].append(id1)
+
+    visited = set()
+    representatives = set()
+    ids_to_remove = set()
+    for doc_id in id_list:
+        if doc_id not in visited:
+            component = []
+            q = [doc_id]; visited.add(doc_id); head = 0
+            while head < len(q):
+                 u = q[head]; head += 1; component.append(u)
+                 for v in adj[u]:
+                     if v not in visited: visited.add(v); q.append(v)
+            if len(component) > 1:
+                representative = min(component) # Keep the one with the smallest ID
+                representatives.add(representative)
+                for member_id in component:
+                    if member_id != representative: ids_to_remove.add(member_id)
+
+    num_duplicates_removed = len(ids_to_remove)
+    print(f"Identified {len(representatives)} groups. Docs to remove: {num_duplicates_removed}.")
+    return ids_to_remove, num_duplicates_removed
+
+# --- Main Deduplication Function ---
+def tfidf_minhash(
+    spark_session: SparkSession,
+    df: DataFrame,
+    column: str,
+    num_perm: int = None, # Unused
+    ngram_size: int = None, # Unused
+    min_ngram_size: int = None, # Unused
+    threshold: float = 0.8,
+    n_components: int = 128
+    ) -> Tuple[DataFrame, int]:
+    """
+    Performs TF-IDF (sklearn) -> KMeans (Spark ML) -> Per-Cluster Similarity Check (Driver).
+    """
+    print(f"Starting TF-IDF + Clustering Deduplication: Threshold={threshold}, N_Components={n_components}")
+    overall_start_time = time.time()
+    original_cols = df.columns # Keep track of original columns
+
+    # === Step 1: TF-IDF Vectorization (Sklearn Fit/Transform) ===
+    vector_df = run_sklearn_vectorization(spark_session, df, column, n_components)
+    vector_df.persist(StorageLevel.MEMORY_AND_DISK) # Cache vectors
+    if vector_df.rdd.isEmpty():
+        print("Vectorization resulted in an empty DataFrame. Returning original data.")
+        return df, 0
+
+    # === Step 2: Convert to Spark ML Vectors ===
+    to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
+    vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
+    vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
+    if vector_df_ml.rdd.isEmpty():
+        print("No valid Spark ML vectors created. Returning original data.")
+        vector_df.unpersist()
+        return df, 0
+    vector_df_ml.persist(StorageLevel.MEMORY_AND_DISK) # Cache ML vectors
+    vector_df.unpersist() # Unpersist previous stage
+
+    # === Step 3: Spark ML KMeans Clustering ===
+    num_records = vector_df_ml.count()
+    k = max(2, min(20, int(math.sqrt(num_records / 100)))) # Heuristic for K
+    print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
+    kmeans = SparkKMeans(k=k, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
+    kmeans_start_time = time.time()
+    kmeans_model = kmeans.fit(vector_df_ml)
+    print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
+    clustered_df = kmeans_model.transform(vector_df_ml)
+    # Keep __id__, original tfidf_features (needed for similarity), and prediction
+    clustered_df = clustered_df.select("__id__", "tfidf_features", "prediction")
+    clustered_df.persist(StorageLevel.MEMORY_AND_DISK) # Cache clustered results
+    vector_df_ml.unpersist() # Unpersist previous stage
+
+    # === Step 4: Per-Cluster Duplicate Detection (Driver-Side) ===
+    cluster_ids = [row.prediction for row in clustered_df.select("prediction").distinct().collect()]
+    print(f"Found {len(cluster_ids)} distinct clusters. Processing each for duplicates...")
+    all_ids_to_remove = set()
+    total_duplicates_found = 0
+    cluster_processing_start_time = time.time()
+
+    for i, cluster_id in enumerate(cluster_ids):
+        log.debug(f"--- Processing Cluster {cluster_id} ({i+1}/{len(cluster_ids)}) ---")
+        # Select data for the current cluster
+        # IMPORTANT: This filter + collect inside the loop can be inefficient if many clusters
+        cluster_data_df = clustered_df.filter(F.col("prediction") == cluster_id).select("__id__", "tfidf_features")
+        # Execute the driver-side similarity check
+        ids_to_remove_in_cluster, duplicates_in_cluster = find_duplicates_within_cluster_driver(
+            cluster_data_df, "tfidf_features", threshold=threshold, id_col="__id__"
+        )
+        if duplicates_in_cluster > 0:
+            print(f"Cluster {cluster_id}: Found {duplicates_in_cluster} duplicates to remove.")
+            all_ids_to_remove.update(ids_to_remove_in_cluster)
+            total_duplicates_found += duplicates_in_cluster
+        # No need to cache cluster_data_df as it's collected immediately
+
+    print(f"Cluster processing took {time.time() - cluster_processing_start_time:.2f}s.")
+    clustered_df.unpersist() # Unpersist clustered data
+
+    # === Step 5: Filter Original DataFrame ===
+    print(f"Total duplicates identified across all clusters: {total_duplicates_found}")
+    print(f"Total unique documents to remove: {len(all_ids_to_remove)}")
+
+    # Ensure original DF has __id__ if it wasn't added before vectorization
+    if "__id__" not in df.columns:
+         df_with_id = df.withColumn("__id__", F.monotonically_increasing_id())
+         print("Original DataFrame did not have '__id__', adding it now for filtering.")
+    else:
+         df_with_id = df
+
+    if all_ids_to_remove:
+        final_df = df_with_id.filter(~F.col("__id__").isin(list(all_ids_to_remove)))
+    else:
+        print("No duplicates found matching threshold.")
+        final_df = df_with_id # Return original data if no duplicates
+
+    # Select only the original columns, dropping temporary __id__
+    final_df = final_df.select(*original_cols)
+
+    overall_end_time = time.time()
+    print(f"TF-IDF + Clustering Deduplication completed in {overall_end_time - overall_start_time:.2f}s.")
+
+    return final_df, total_duplicates_found
 
 
-def tfidf_minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold, n_components=128):
-    # this function first performs tfidf vectorization, followed by kmeans clustring, then it performs minhash lsh on each cluster.
-    
-    # First, perform TF-IDF vectorization
-    df = tfidf_vec(df, column, n_components)
-    # now we have a dataframe with a column of text that is named column and a column of ids that is named __id__
-    # and a vector column of tfidf vectors of dimension 128 values that is named tfidf
-    
-    # # Import necessary functions from deduplication_spark
-    # from pyspark.ml.clustering import KMeans
-    # from pyspark.ml.evaluation import ClusteringEvaluator
-    # import math
-    # from src.deduplication_spark import minhash_lsh, optimal_param, MERSENNE_PRIME, MAX_HASH, RNG
-    # import numpy as np
-    
-    # # Determine the number of clusters - a reasonable heuristic
-    # # More data needs more clusters
-    # num_records = df.count()
-    # k = max(2, min(100, int(math.sqrt(num_records / 10))))
-    
-    # # Apply KMeans clustering
-    # kmeans = KMeans(k=k, seed=42, featuresCol="tfidf")
-    # model = kmeans.fit(df)
-    
-    # # Add cluster predictions to the dataframe
-    # clustered_df = model.transform(df)
-    
-    # # Generate parameters for minhash LSH
-    # B, R = optimal_param(threshold, num_perm)
-    # HASH_RANGES = [(i * R, (i + 1) * R) for i in range(B)]
-    # PERMUTATIONS = np.array(
-    #     [
-    #         (
-    #             RNG.randint(1, MERSENNE_PRIME, dtype=np.uint64),
-    #             RNG.randint(0, MERSENNE_PRIME, dtype=np.uint64),
-    #         )
-    #         for _ in range(num_perm)
-    #     ],
-    #     dtype=np.uint64,
-    # ).T
-    
-    # # Group data by cluster for separate deduplication
-    # clusters = clustered_df.select("prediction").distinct().collect()
-    # deduplicated_dfs = []
-    # total_duplicates = 0
-    
-    # # Process each cluster separately
-    # for cluster in clusters:
-    #     cluster_id = cluster["prediction"]
-    #     cluster_df = clustered_df.filter(F.col("prediction") == cluster_id)
-        
-    #     # Skip small clusters (less than 2 records)
-    #     if cluster_df.count() < 2:
-    #         deduplicated_dfs.append(cluster_df.drop("prediction"))
-    #         continue
-        
-    #     # Apply minhash LSH on this cluster
-    #     from src.deduplication_spark import deduplicate, generate_hash_values, generate_edges
-        
-    #     # Get original record count for this cluster
-    #     cluster_count = cluster_df.count()
-        
-    #     # Prepare the edges for deduplication
-    #     records = cluster_df.select("__id__", column).rdd
-    #     records = records.repartition(num_perm * 2).cache()
-        
-    #     edges = (
-    #         records.flatMap(
-    #             lambda x: generate_hash_values(
-    #                 content=x[1],
-    #                 idx=x[0],
-    #                 num_perm=num_perm,
-    #                 ngram_size=ngram_size,
-    #                 hashranges=HASH_RANGES,
-    #                 permutations=PERMUTATIONS,
-    #                 min_ngram_size=min_ngram_size,
-    #             )
-    #         )
-    #         .groupBy(lambda x: (x[0], x[1]))
-    #         .flatMap(lambda x: generate_edges([i[2] for i in x[1]]))
-    #         .distinct()
-    #         .cache()
-    #     )
-        
-    #     # Deduplicate this cluster
-    #     dedup_cluster_df, cluster_duplicates = deduplicate(edges, cluster_df)
-    #     deduplicated_dfs.append(dedup_cluster_df.drop("prediction"))
-    #     total_duplicates += cluster_duplicates
-    
-    # # Combine all deduplicated clusters
-    # from functools import reduce
-    # if deduplicated_dfs:
-    #     final_df = reduce(lambda df1, df2: df1.union(df2), deduplicated_dfs)
-    # else:
-    #     final_df = df  # In case no deduplication happened
-    
-    # return final_df, total_duplicates
+# === Example Usage ===
+if __name__ == "__main__":
 
-# # Add a utility function to test both approaches
-# def test_deduplication(input_file, column="text", threshold=0.7, num_perm=256, 
-#                        ngram_size=5, min_ngram_size=5, n_components=128, method="minhash_lsh"):
-#     """
-#     Test deduplication on a sample file using different methods
-    
-#     Parameters:
-#     -----------
-#     input_file : str
-#         Path to input file (CSV or JSON)
-#     column : str
-#         Column containing text to deduplicate
-#     threshold : float
-#         Similarity threshold
-#     num_perm : int
-#         Number of permutations for minhash
-#     ngram_size : int
-#         Size of n-grams
-#     min_ngram_size : int
-#         Minimum size of documents to process
-#     n_components : int
-#         Number of dimensions for TF-IDF
-#     method : str
-#         Method to use ("minhash_lsh" or "tfidf_minhash")
-        
-#     Returns:
-#     --------
-#     tuple
-#         (deduplicated dataframe, number of duplicates found)
-#     """
-#     # Determine file type and load
-#     file_extension = os.path.splitext(input_file.strip(".gz"))[1].lower()
-    
-#     if file_extension == '.csv':
-#         df = spark.read.option("header", "true").csv(input_file)
-#     elif file_extension.endswith('.json'):
-#         df = spark.read.json(input_file)
-#     elif file_extension in ['.parquet', '.pq']:
-#         df = spark.read.parquet(input_file)
-#     else:
-#         raise ValueError(f"Unsupported file format: {file_extension}")
-    
-#     # Apply selected deduplication method
-#     if method == "minhash_lsh":
-#         from src.deduplication_spark import minhash_lsh
-#         return minhash_lsh(df, column, num_perm, ngram_size, min_ngram_size, threshold)
-#     elif method == "tfidf_minhash":
-#         return tfidf_minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold, n_components)
-#     else:
-#         raise ValueError(f"Unknown method: {method}")
-    
-# # Add a main function to allow running from command line
-# if __name__ == "__main__":
-#     import argparse
-    
-#     parser = argparse.ArgumentParser(description="Text deduplication with TF-IDF and MinHash LSH")
-#     parser.add_argument("--input_file", type=str, required=True, help="Path to input file (CSV or JSON)")
-#     parser.add_argument("--output", type=str, required=True, help="Output directory for deduplicated data")
-#     parser.add_argument("--column", type=str, default="text", help="Column containing text to deduplicate")
-#     parser.add_argument("--threshold", type=float, default=0.7, help="Similarity threshold")
-#     parser.add_argument("--num_perm", type=int, default=256, help="Number of permutations for MinHash")
-#     parser.add_argument("--ngram_size", type=int, default=5, help="Size of n-grams")
-#     parser.add_argument("--min_ngram_size", type=int, default=5, help="Minimum document size to process")
-#     parser.add_argument("--n_components", type=int, default=128, help="Number of dimensions for TF-IDF vectors")
-#     parser.add_argument("--method", type=str, default="tfidf_minhash", 
-#                         choices=["minhash_lsh", "tfidf_minhash"], 
-#                         help="Deduplication method to use")
-    
-#     args = parser.parse_args()
-    
-#     # Create output directory if it doesn't exist
-#     if not os.path.exists(args.output):
-#         os.makedirs(args.output)
-#         print(f"Created output directory: {args.output}")
-    
-#     # Perform deduplication
-#     import time
-#     start_time = time.time()
-    
-#     # Get original file size
-#     if os.path.exists(args.input_file):
-#         original_size_mb = os.path.getsize(args.input_file) / (1024 * 1024)
-#         print(f"Original file size: {original_size_mb:.2f} MB")
-    
-#     # Run deduplication
-#     deduplicated_df, duplicate_count = test_deduplication(
-#         input_file=args.input_file,
-#         column=args.column,
-#         threshold=args.threshold,
-#         num_perm=args.num_perm,
-#         ngram_size=args.ngram_size,
-#         min_ngram_size=args.min_ngram_size,
-#         n_components=args.n_components,
-#         method=args.method
-#     )
-    
-#     # Get record counts
-#     original_count = deduplicated_df.count() + duplicate_count
-    
-#     # Write output
-#     output_path = os.path.join(args.output, f"dedup_{args.method}")
-#     deduplicated_df.write.parquet(output_path, mode="overwrite")
-    
-#     # Calculate time and print summary
-#     elapsed_time = time.time() - start_time
-    
-#     print("\nDeduplication Summary:")
-#     print(f"Method: {args.method}")
-#     print(f"Original records: {original_count}")
-#     print(f"Deduplicated records: {deduplicated_df.count()}")
-#     print(f"Duplicates removed: {duplicate_count} ({duplicate_count/original_count*100:.2f}%)")
-#     print(f"Time elapsed: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)")
-#     print(f"Output saved to: {output_path}")
-    
-#     # Optional: save summary to a log file
-#     with open(os.path.join(args.output, "deduplication_log.txt"), "a") as f:
-#         f.write(f"\n--- Run at {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
-#         f.write(f"Method: {args.method}\n")
-#         f.write(f"Input: {args.input_file}\n")
-#         f.write(f"Original records: {original_count}\n")
-#         f.write(f"Deduplicated records: {deduplicated_df.count()}\n")
-#         f.write(f"Duplicates removed: {duplicate_count} ({duplicate_count/original_count*100:.2f}%)\n")
-#         f.write(f"Time elapsed: {elapsed_time:.2f} seconds ({elapsed_time/60:.2f} minutes)\n")
-#         f.write(f"Parameters: threshold={args.threshold}, num_perm={args.num_perm}, n_components={args.n_components}\n")
-#         f.write("----------------------------------------\n")
-    
-#     # Stop Spark session
-#     # spark.stop()
-    
-    
-    
+    # --- Create Simple Dummy Data ---
+    BASE_DIR = "/tmp/spark_sklearn_dedup_v8_data"
+    INPUT_DATA_PATTERN = os.path.join(BASE_DIR, "input", "*.csv")
+    def create_simple_dummy_data(path_pattern: str, num_lines: int, prefix: str):
+        base_dir = os.path.dirname(path_pattern.replace("*",""))
+        file_path = os.path.join(base_dir, f"{prefix}_data.csv")
+        if not os.path.exists(file_path) or os.path.getsize(file_path) == 0:
+            print(f"Creating dummy data: {file_path}")
+            Path(base_dir).mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w") as f:
+                f.write("doc_id_orig,text\n") # Header
+                for i in range(num_lines):
+                     # Create near duplicates
+                     text_content = f"The quick brown fox jumps over the lazy dog sentence number {i % 5}"
+                     f.write(f"doc_{i},{text_content} with suffix {i%2}.\n")
+                # Add exact duplicates
+                f.write(f"doc_{num_lines},The quick brown fox jumps over the lazy dog sentence number {0 % 5} with suffix {0%2}.\n")
+                f.write(f"doc_{num_lines+1},The quick brown fox jumps over the lazy dog sentence number {1 % 5} with suffix {1%2}.\n")
+        else: print(f"Dummy data exists: {file_path}")
+        return base_dir + "/*.csv"
+
+    INPUT_DATA_PATTERN = create_simple_dummy_data(INPUT_DATA_PATTERN, 500, "documents")
+    print(f"Using input data pattern: {INPUT_DATA_PATTERN}")
+
+    try:
+        # Load data
+        input_df = spark.read.option("header", "true").csv(INPUT_DATA_PATTERN)
+        input_df.persist()
+        original_count = input_df.count()
+        print(f"Loaded {original_count} records for deduplication.")
+        input_df.show(5, truncate=False)
+
+        # --- Run Deduplication ---
+        deduplicated_df, duplicate_count = tfidf_minhash(
+            spark_session=spark,
+            df=input_df,
+            column="text",
+            threshold=0.95,  # High threshold for near-exact duplicates
+            n_components=32  # Lower components for speed
+        )
+
+        final_count = deduplicated_df.count()
+        print("\n--- Deduplication Results ---")
+        print(f"Original record count: {original_count}")
+        print(f"Deduplicated record count: {final_count}")
+        print(f"Number of duplicates removed (estimate): {duplicate_count}") # Note this counts pairs leading to removal
+        print(f"Actual records removed: {original_count - final_count}")
+        print(f"Percentage removed: {((original_count - final_count) / original_count * 100) if original_count > 0 else 0:.2f}%")
+
+        print("Sample of deduplicated data:")
+        deduplicated_df.show(5, truncate=False)
+
+        input_df.unpersist()
+
+    except Exception as e:
+        print(f"\n--- JOB FAILED: {e} ---", exc_info=True) # Log traceback
+    finally:
+        print("Stopping Spark session.")
+        spark.stop()

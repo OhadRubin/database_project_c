@@ -4,6 +4,10 @@ os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
 os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
 
 import sys
+
+# Add project root to Python path
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+sys.path.insert(0, project_root)
 from itertools import tee
 from logging import Logger
 from typing import Iterable
@@ -371,7 +375,8 @@ def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngra
 
 
 from src.tfidf_vec import tfidf_minhash
-def minhash_lsh(df, column, num_perm, ngram_size, min_ngram_size, threshold):
+def minhash_lsh(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
+    print(spark)
     B, R = optimal_param(threshold, num_perm)
     log.info(f"Using optimal parameters: {B=}, {R=}")
     HASH_RANGES = [(i * R, (i + 1) * R) for i in range(B)]
@@ -548,16 +553,20 @@ if __name__ == "__main__":
         
         
         import time
-        
+        # Get the current file's directory to make paths relative
+        # /home/ohadr/database_project_c/database_project/src/deduplication_spark.py
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        # Add SVD module to Spark context
+        spark.sparkContext.addPyFile(os.path.join(current_dir, "svd.py"))
         # Track original record count
         original_count = df.count()
         
         start_time = time.time()
         # assert args.implementation == "minhash_lsh"
         if args.implementation == "minhash_lsh":
-            df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+            df, duplicate_count = minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
         elif args.implementation == "tfidf_minhash":
-            df, duplicate_count = tfidf_minhash(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+            df, duplicate_count = tfidf_minhash(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
         dedup_count = original_count-duplicate_count
         log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
         dedup_time = time.time() - start_time
@@ -608,5 +617,5 @@ if __name__ == "__main__":
         print(f"Error saving benchmark data: {e}")
 
 # /dev/shm/c4_files/*.json.gz
-# python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1
+# python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1 --implementation tfidf_minhash
 #python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 10
