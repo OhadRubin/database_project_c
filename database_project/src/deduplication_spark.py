@@ -553,8 +553,11 @@ if __name__ == "__main__":
         original_count = df.count()
         
         start_time = time.time()
-        assert args.implementation == "minhash_lsh"
-        df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+        # assert args.implementation == "minhash_lsh"
+        if args.implementation == "minhash_lsh":
+            df, duplicate_count = minhash_lsh(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+        elif args.implementation == "tfidf_minhash":
+            df, duplicate_count = tfidf_minhash(df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
         dedup_count = original_count-duplicate_count
         log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
         dedup_time = time.time() - start_time
