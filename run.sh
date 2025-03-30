@@ -13,7 +13,8 @@ fi
 (cd ~/database_project_c && git pull)
 cd ~/database_project_c
 
-
+source ~/.bashrc
+export POSTGRES_ADDRESS="postgresql+psycopg2://postgres:$REDIS_PASSWORD@34.141.239.167:5564/postgres"
 
 
 # Check if c4_files directory exists in /dev/shm
@@ -47,7 +48,7 @@ if ! command -v $RAY_EXEC &> /dev/null; then
     python3.10 -m pip install ray
 fi
 
-~/.bashrc .
+
 HEAD_IP=$(gcloud compute tpus list --zone us-central2-b --filter="name:v4-8-node-2" --format=json | jq -r '.[].ipAddress')
 MY_IP=$(hostname -I | awk '{print $1}')
 

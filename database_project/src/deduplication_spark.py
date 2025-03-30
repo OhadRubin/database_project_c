@@ -370,7 +370,7 @@ def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngra
     return corpus_rdd.map(lambda x: (x[0], hash_content(x[1], num_perm, ngram_size, min_ngram_size, permutations)))
 
 
-    
+from src.tfidf_vec import tfidf_minhash
 def minhash_lsh(df, column, num_perm, ngram_size, min_ngram_size, threshold):
     B, R = optimal_param(threshold, num_perm)
     log.info(f"Using optimal parameters: {B=}, {R=}")
