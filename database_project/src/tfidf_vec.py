@@ -76,6 +76,8 @@ def tfidf_vec(df, column, n_components=128):
         schema
     )
     
+    vector_df.collect()
+    vector_df.show()
     # Convert array to ML Vector for easier use with MLlib
     from pyspark.sql.functions import udf
     from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
