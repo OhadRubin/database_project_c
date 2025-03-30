@@ -40,6 +40,7 @@ def tfidf_vec(df, column, n_components=128):
     # and a vector column of tfidf vectors of dimension 128 values that is named tfidf
     df = df.withColumn("__id__", F.monotonically_increasing_id()).cache()
     records = df.select("__id__", column).rdd
+    records = records.repartition(256 * 2).cache()
     text_rdd = records.map(lambda x: x[1])
     id_rdd = records.map(lambda x: x[0])
 
