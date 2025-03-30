@@ -497,7 +497,7 @@ if __name__ == "__main__":
             spark = raydp.init_spark(
                     app_name="MinHashLSH",
                     num_executors=num_nodes,
-                    executor_cores=200, # how many tasks the executor can run in parallel
+                    executor_cores=235, # how many tasks the executor can run in parallel
                     executor_memory="100g",
                     configs = {
                             'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
@@ -606,4 +606,4 @@ if __name__ == "__main__":
 
 # /dev/shm/c4_files/*.json.gz
 # python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1
-#export PYSPARK_PYTHON=/usr/bin/python3.10 && export PYSPARK_DRIVER_PYTHON=/usr/bin/python3.10 && python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 10
+#python3.10 database_project/src/deduplication_spark.py --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 10
