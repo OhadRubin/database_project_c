@@ -26,6 +26,10 @@ from splearn.decomposition import SparkTruncatedSVD
 from splearn.pipeline import SparkPipeline
 
 
+
+# from pyspark.mllib.feature import HashingTF, IDF
+
+
 import pandas as pd
 
 
@@ -76,23 +80,23 @@ def tfidf_vec(df, column, n_components=128):
         recon_rdd.map(lambda x: (x[0], x[1].tolist())),
         schema
     )
-    
-    vector_df.collect()
     vector_df.show()
-    # Convert array to ML Vector for easier use with MLlib
-    from pyspark.sql.functions import udf
-    from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
+    # # vector_df.collect()
+    # vector_df.show()
+    # # Convert array to ML Vector for easier use with MLlib
+    # from pyspark.sql.functions import udf
+    # from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
     
-    # UDF to convert array to Vector
-    array_to_vector = udf(lambda x: MLVectors.dense(x), VectorUDT())
+    # # UDF to convert array to Vector
+    # array_to_vector = udf(lambda x: MLVectors.dense(x), VectorUDT())
     
-    # Apply the UDF to create the vector column
-    vector_df = vector_df.withColumn("tfidf", array_to_vector("tfidf_features")).drop("tfidf_features")
+    # # Apply the UDF to create the vector column
+    # vector_df = vector_df.withColumn("tfidf", array_to_vector("tfidf_features")).drop("tfidf_features")
     
-    # Join back with the original dataframe
-    result_df = df.join(vector_df, on="__id__", how="inner").cache()
+    # # Join back with the original dataframe
+    # result_df = df.join(vector_df, on="__id__", how="inner").cache()
     
-    return result_df
+    # return result_df
 
 
 def tfidf_minhash(df, column, num_perm, ngram_size, min_ngram_size, threshold, n_components=128):
