@@ -329,6 +329,10 @@ def run_clustering_pipeline(ds, cfg: object):
 # if __name__ == "__main__":
     # --- Configuration ---
     # Set the path to your configuration file
+    
+# from config_dict import config_dict
+from ml_collections import config_dict
+
 def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
 
     dummy_config = {
@@ -358,12 +362,12 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
         },
         "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
     }
-    
+    cfg = config_dict.ConfigDict(dummy_config)
 
     # --- Run Pipeline ---
     start_time = time.time()
     df = ray.data.from_spark(df, parallelism=100)
-    run_clustering_pipeline(df, dummy_config)
+    run_clustering_pipeline(df, cfg)
     end_time = time.time()
     print(f"Total pipeline execution time: {end_time - start_time:.2f} seconds")
     
