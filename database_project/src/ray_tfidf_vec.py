@@ -11,19 +11,72 @@ from typing import List, Dict, Tuple, Any
 
 from sklearn.pipeline import Pipeline
 import torch
+from sklearn.cluster import KMeans
 
 
-# Make sure these are defined and importable in your Ray environment
-from your_module import (
-    load_config,
-    get_pipeline,
-    KMeans,  # Your KMeans class implementation
-    fit_kmeans, # Your function to fit KMeans on embeddings
-    NumberNormalizingVectorizer, # If used by get_pipeline
-    calc_batch_size,
-    deduplicate_dataset, # Your deduplication function
-    # compile_nearest_cluster # Keep commented out for now for simplicity
-)
+import os
+import numpy as np
+import pandas as pd # Used for type hints, not core logic
+from pyspark import SparkConf
+from pyspark.sql import SparkSession, Row, DataFrame
+from pyspark.sql import functions as F
+import logging
+import math
+import time
+from functools import reduce
+from typing import Dict, Any, Iterator, List, Tuple, Optional, Set
+# Import scikit-learn components
+from sklearn.decomposition import TruncatedSVD
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import Normalizer
+# Import Spark ML components
+
+import socket
+
+from sklearn.feature_extraction import text
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
+from tqdm import tqdm
+
+# Get the logger for TfidfVectorizer
+tfidf_logger = logging.getLogger('sklearn.feature_extraction.text')
+# Ignore warnings about stop words inconsistency
+import warnings
+warnings.filterwarnings('ignore', message="Your stop_words may be inconsistent with your preprocessing.*", category=UserWarning)
+
+import ray
+
+
+def number_normalizer(tokens):
+    return ("#NUMBER" if token[0].isdigit() else token for token in tokens)
+
+
+class NumberNormalizingVectorizer(TfidfVectorizer):
+    def build_tokenizer(self):
+        tokenize = super().build_tokenizer()
+        return lambda doc: list(number_normalizer(tokenize(doc)))
+    
+
+
+def get_sklearn_feature_pipeline(n_components, random_seed):
+    stop_words = list(ENGLISH_STOP_WORDS.union(["#NUMBER"]))
+    vectorizer = Pipeline([('tfidf', NumberNormalizingVectorizer(stop_words=stop_words)),
+                            ('svd', TruncatedSVD(n_components=n_components,random_state=random_seed)),
+                            ('normalizer', Normalizer(copy=False))],
+                            verbose=True)
+    return vectorizer
+
+
+
+    
+
+def fit_kmeans(iterable, n_clusters, batch_size, **kwargs):
+    kmeans = KMeans(n_clusters=n_clusters, balanced=True, **kwargs)
+    with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
+        for i,batch in enumerate(iterable):
+            pbar.update(batch.shape[0])
+            kmeans.fit(batch, iter_limit=20, online=True, iter_k=i)
+    return kmeans
+
 
 # --- Constants ---
 CLUSTER_A_COL = 'cluster_A'
@@ -46,14 +99,15 @@ def fit_models_remote(
 
     texts = sample_data["text"].tolist()
     print(f"[{stage_label}] Fitting vectorizer on {len(texts)} samples...")
-    vectorizer = get_pipeline()
+    vectorizer = get_sklearn_feature_pipeline(n_components=128, random_seed=42)
     embeddings = vectorizer.fit_transform(texts)
     print(f"[{stage_label}] Vectorizer fitting done. Embedding shape: {embeddings.shape}")
 
     print(f"[{stage_label}] Fitting K-means with {n_clusters} clusters...")
     kmeans_batch_size_config = getattr(cfg, kmeans_train_batch_size_key)
         
-    kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_batch_size_config) # Pass computed BS if needed
+    # kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_batch_size_config) # Pass computed BS if needed
+    kmeans = None
     print(f"[{stage_label}] K-means fitting done.")
 
     return vectorizer, kmeans
@@ -71,8 +125,8 @@ def apply_models_batch(
     vectorizer = ray.get(vectorizer_ref) # Retrieve models from Object Store (Ray caches locally after first get)
     kmeans = ray.get(kmeans_ref)
 
-    if vectorizer is None or kmeans is None:
-        assert False
+    # if vectorizer is None or kmeans is None:
+    #     assert False
 
     texts = batch["text"].tolist()
     # 1. Vectorize (Transform)
@@ -83,9 +137,6 @@ def apply_models_batch(
 
 
     return batch
-
-
-# --- Ray Tasks for Stage 2/3 Group Processing ---
 
 @ray.remote
 def process_stage2_group(
@@ -121,17 +172,11 @@ def process_stage2_group(
     # We return the *refs* to the models, not the models themselves
     return cluster_a_id, (vectorizer_ref, kmeans_ref)
 
-def run_clustering_pipeline(config_path: str):
+def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     
-    cfg = load_config(config_path=config_path)
     
-    # --- Initialize Ray ---
-    # Adjust address, resources, temp dir as needed
-    if not ray.is_initialized():
-        ray.init(address='auto', )
-    hf_dataset = load_dataset(**cfg.train1_ds_kwargs_load)
-    ds = ray.data.from_huggingface(hf_dataset)
+    
 
 
     # Optional: Limit size for testing/development
@@ -281,10 +326,10 @@ def run_clustering_pipeline(config_path: str):
     print("--- Pipeline Finished ---")
 
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
     # --- Configuration ---
     # Set the path to your configuration file
-    CONFIG_FILE_PATH = "path/to/your/config.json" # <--- *** SET THIS PATH ***
+def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
 
     if not os.path.exists(CONFIG_FILE_PATH):
          print(f"Error: Configuration file not found at {CONFIG_FILE_PATH}")
@@ -299,7 +344,7 @@ if __name__ == "__main__":
              "stage1_train_kmeans_bs": 1024,
              "stage1_inf_kmeans_bs": 4096, # Needed if using JAX prediction
              "stage1_inf_batch_size": 1000, # Ray batch size for inference
-             "stage1_train_cpus": 4, # Resources for Stage 1 training task
+             "stage1_train_cpus": 70, # Resources for Stage 1 training task
              "stage2_train_kmeans_bs": 512,
              "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
              "stage2_inf_batch_size": 1000,
@@ -326,11 +371,14 @@ if __name__ == "__main__":
 
     # --- Run Pipeline ---
     start_time = time.time()
-    run_clustering_pipeline(CONFIG_FILE_PATH)
+    df = ray.data.from_spark(df, parallelism=100)
+    run_clustering_pipeline(df, dummy_config)
     end_time = time.time()
     print(f"Total pipeline execution time: {end_time - start_time:.2f} seconds")
     
-    
-def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
-    
 
+
+
+    
+    
+    
