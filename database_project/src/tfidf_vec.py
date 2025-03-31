@@ -72,7 +72,7 @@ def _transform_partition_sklearn(
     ) -> Iterator[Tuple[int, List[float]]]:
     """Helper function run by mapPartitions to transform data using broadcasted sklearn pipeline."""
     global EXECUTOR_PIPELINE
-    print(f"Executor node {socket.gethostname()} accessing broadcast data")
+    # print(f"Executor node {socket.gethostname()} accessing broadcast data")
     # Lazy init of model from broadcast *once per worker*
     
     if EXECUTOR_PIPELINE is None:
@@ -160,8 +160,40 @@ def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df
     vector_df.show()
     print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
     df_with_id.unpersist() # Unpersist input now
-    # vector_df.collect()
     return vector_df
+
+def tfidf_cluster(spark: SparkSession, df: DataFrame, column: str, n_components: int, k: int):
+    # === Step 1: TF-IDF Vectorization (Sklearn Fit/Transform) ===
+    pipeline, df_with_id = train_sklearn_vectorization(df, column, n_components)
+    vector_df = inference_sklearn_vectorization(spark, pipeline, df_with_id, column, map_partitions_batch_size=10000)
+
+
+    # # === Step 2: Convert to Spark ML Vectors ===
+    to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
+    vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
+    vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
+    # Drop the tfidf_features column as it's no longer needed
+    vector_df_ml = vector_df_ml.drop("tfidf_features")
+    
+    # === Step 2.5: Join with original data ===
+    print("Joining vector features with original data")
+    join_start_time = time.time()
+    # Join the ML vector features back with the original dataframe
+    vector_df.unpersist() # Unpersist previous stage
+    # This ensures we have both the features and all original columns
+    vector_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
+    print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
+    print(f"Joined dataframe has {vector_df.count()} rows")
+    
+    # print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
+    kmeans = SparkKMeans(k=k, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
+    kmeans_start_time = time.time()
+    sample_df = vector_df.limit(10000)
+    kmeans_model = kmeans.fit(sample_df)
+    print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
+    clustered_df = kmeans_model.transform(vector_df)
+    clustered_df = clustered_df.drop("features")
+    return clustered_df
 
 
 # --- Main Deduplication Function ---
@@ -183,103 +215,10 @@ def tfidf_minhash(
     original_cols = df.columns # Keep track of original columns
     df = df.repartition(100)
 
-    # === Step 1: TF-IDF Vectorization (Sklearn Fit/Transform) ===
-    pipeline, df_with_id = train_sklearn_vectorization(df, column, n_components)
-    vector_df = inference_sklearn_vectorization(spark, pipeline, df_with_id, column, map_partitions_batch_size=1000)
-
-
-    # # === Step 2: Convert to Spark ML Vectors ===
-    to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
-    vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
-    vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
-    # Drop the tfidf_features column as it's no longer needed
-    vector_df_ml = vector_df_ml.drop("tfidf_features")
-    
-    # === Step 2.5: Join with original data ===
-    print("Joining vector features with original data")
-    join_start_time = time.time()
-    # Join the ML vector features back with the original dataframe
-    vector_df.unpersist() # Unpersist previous stage
-    # This ensures we have both the features and all original columns
-    vector_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
-    print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
-    print(f"Joined dataframe has {vector_df.count()} rows")
-    # vector_df.collect()
-    # vector_df.show()
-    
-    # if vector_df_ml.rdd.isEmpty():
-    #     print("No valid Spark ML vectors created. Returning original data.")
-    #     vector_df.unpersist()
-    #     return df, 0
-    # vector_df_ml.persist(StorageLevel.MEMORY_AND_DISK) # Cache ML vectors
-
-    # # === Step 3: Spark ML KMeans Clustering ===
-    # num_records = vector_df_ml.count()
-    # k = max(2, min(20, int(math.sqrt(num_records / 100)))) # Heuristic for K
-    # print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
-    kmeans = SparkKMeans(k=10, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
-    kmeans_start_time = time.time()
-    sample_df = vector_df.limit(10000)
-    kmeans_model = kmeans.fit(sample_df)
-    print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
-    clustered_df = kmeans_model.transform(vector_df)
-    clustered_df = clustered_df.drop("features")
-    
+    clustered_df = tfidf_cluster(spark, df, column, n_components, k)
     clustered_df.show()
     clustered_df.collect()
     
-    # # Keep __id__, original tfidf_features (needed for similarity), and prediction
-    # clustered_df = clustered_df.select("__id__", "tfidf_features", "prediction")
-    # clustered_df.persist(StorageLevel.MEMORY_AND_DISK) # Cache clustered results
-    # vector_df_ml.unpersist() # Unpersist previous stage
-
-    # # === Step 4: Per-Cluster Duplicate Detection (Driver-Side) ===
-    # cluster_ids = [row.prediction for row in clustered_df.select("prediction").distinct().collect()]
-    # print(f"Found {len(cluster_ids)} distinct clusters. Processing each for duplicates...")
-    # all_ids_to_remove = set()
-    # total_duplicates_found = 0
-    # cluster_processing_start_time = time.time()
-
-    # for i, cluster_id in enumerate(cluster_ids):
-    #     # log.debug(f"--- Processing Cluster {cluster_id} ({i+1}/{len(cluster_ids)}) ---")
-    #     # Select data for the current cluster
-    #     # IMPORTANT: This filter + collect inside the loop can be inefficient if many clusters
-    #     cluster_data_df = clustered_df.filter(F.col("prediction") == cluster_id).select("__id__", "tfidf_features")
-    #     # Execute the driver-side similarity check
-    #     ids_to_remove_in_cluster, duplicates_in_cluster = find_duplicates_within_cluster_driver(
-    #         cluster_data_df, "tfidf_features", threshold=threshold, id_col="__id__"
-    #     )
-    #     if duplicates_in_cluster > 0:
-    #         print(f"Cluster {cluster_id}: Found {duplicates_in_cluster} duplicates to remove.")
-    #         all_ids_to_remove.update(ids_to_remove_in_cluster)
-    #         total_duplicates_found += duplicates_in_cluster
-    #     # No need to cache cluster_data_df as it's collected immediately
-
-    # print(f"Cluster processing took {time.time() - cluster_processing_start_time:.2f}s.")
-    # clustered_df.unpersist() # Unpersist clustered data
-
-    # # === Step 5: Filter Original DataFrame ===
-    # print(f"Total duplicates identified across all clusters: {total_duplicates_found}")
-    # print(f"Total unique documents to remove: {len(all_ids_to_remove)}")
-
-    # # Ensure original DF has __id__ if it wasn't added before vectorization
-    # if "__id__" not in df.columns:
-    #      df_with_id = df.withColumn("__id__", F.monotonically_increasing_id())
-    #      print("Original DataFrame did not have '__id__', adding it now for filtering.")
-    # else:
-    #      df_with_id = df
-
-    # if all_ids_to_remove:
-    #     final_df = df_with_id.filter(~F.col("__id__").isin(list(all_ids_to_remove)))
-    # else:
-    #     print("No duplicates found matching threshold.")
-    #     final_df = df_with_id # Return original data if no duplicates
-
-    # # Select only the original columns, dropping temporary __id__
-    # final_df = final_df.select(*original_cols)
-
-    # overall_end_time = time.time()
-    # print(f"TF-IDF + Clustering Deduplication completed in {overall_end_time - overall_start_time:.2f}s.")
 
     return None, 0
 

@@ -49,6 +49,9 @@ if ! command -v $RAY_EXEC &> /dev/null; then
 fi
 
 
+NODES_IPS=$(gcloud compute tpus list --zone us-central2-b --filter="name ~ v4-8" --format=json | jq -r '.[].ipAddress')
+N_NODES=$(echo "$NODES_IPS" | wc -l)
+
 HEAD_IP=$(gcloud compute tpus list --zone us-central2-b --filter="name:v4-8-node-2" --format=json | jq -r '.[].ipAddress')
 MY_IP=$(hostname -I | awk '{print $1}')
 
@@ -77,7 +80,7 @@ fi
 
 
 # Wait until we have 10 nodes in the Ray cluster
-echo "Waiting for 10 nodes to join the Ray cluster..."
+echo "Waiting for $N_NODES=10 nodes to join the Ray cluster..."
 while true; do
     NODE_COUNT=$(python3.10 -c 'import ray; ray.init(address="auto"); print(len([x for x in ray.nodes() if x["alive"]]))')
     echo "Current node count: $NODE_COUNT"
