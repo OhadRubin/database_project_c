@@ -201,11 +201,11 @@ def tfidf_minhash(
     # Join the ML vector features back with the original dataframe
     vector_df.unpersist() # Unpersist previous stage
     # This ensures we have both the features and all original columns
-    joined_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
+    vector_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
     print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
-    print(f"Joined dataframe has {joined_df.count()} rows")
-    joined_df.collect()
-    joined_df.show()
+    print(f"Joined dataframe has {vector_df.count()} rows")
+    # vector_df.collect()
+    # vector_df.show()
     
     # if vector_df_ml.rdd.isEmpty():
     #     print("No valid Spark ML vectors created. Returning original data.")
@@ -219,9 +219,10 @@ def tfidf_minhash(
     # print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
     kmeans = SparkKMeans(k=10, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
     kmeans_start_time = time.time()
-    kmeans_model = kmeans.fit(joined_df)
+    sample_df = vector_df.limit(10000)
+    kmeans_model = kmeans.fit(sample_df)
     print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
-    clustered_df = kmeans_model.transform(vector_df_ml)
+    clustered_df = kmeans_model.transform(vector_df)
     clustered_df = clustered_df.drop("features")
     
     clustered_df.show()
