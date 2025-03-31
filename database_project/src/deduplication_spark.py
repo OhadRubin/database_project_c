@@ -82,6 +82,8 @@ def get_total_size_gb(files):
 
 tfidf_minhash = None  # This will be populated after adding the file to SparkContext
 minhash_lsh = None  # This will be populated after adding the file to SparkContext
+tfidf_minhash_ray = None  # This will be populated after adding the file to SparkContext
+minhash_lsh_ray = None  # This will be populated after adding the file to SparkContext
 
 if __name__ == "__main__":
 
@@ -153,11 +155,14 @@ if __name__ == "__main__":
         current_dir = os.path.dirname(os.path.abspath(__file__))
 
         spark.sparkContext.addPyFile(os.path.join(current_dir, "tfidf_vec.py"))
+        # spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec.py"))
+        spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec_test.py"))
         spark.sparkContext.addPyFile(os.path.join(current_dir, "minhash.py"))
         
         # Now we can import the function directly
         from tfidf_vec import tfidf_minhash
         from minhash import minhash_lsh
+        from ray_tfidf_vec import tfidf_minhash_ray
         
         # Track original record count
         original_count = df.count()
@@ -168,6 +173,10 @@ if __name__ == "__main__":
             df, duplicate_count = minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
         elif args.implementation == "tfidf_minhash":
             df, duplicate_count = tfidf_minhash(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+        elif args.implementation == "tfidf_minhash_ray":
+            df, duplicate_count = tfidf_minhash_ray(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+        else:
+            assert False, f"Implementation {args.implementation} not supported"
         dedup_count = original_count-duplicate_count
         log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
         dedup_time = time.time() - start_time
