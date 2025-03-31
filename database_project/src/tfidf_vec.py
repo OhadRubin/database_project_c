@@ -192,7 +192,7 @@ def tfidf_cluster(spark: SparkSession, df: DataFrame, column: str, n_components:
     kmeans_model = kmeans.fit(sample_df)
     print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
     kmeans_inf_time = time.time()
-    vector_df = vector_df.repartition(10000)
+    # vector_df = vector_df.repartition(10000)
     clustered_df = kmeans_model.transform(vector_df)
     print(f"KMeans inference took {time.time() - kmeans_inf_time:.2f}s.")
     clustered_df = clustered_df.drop("features")
@@ -232,29 +232,6 @@ def tfidf_minhash(
     print(f"Sorting completed in {time.time() - sort_start_time:.2f}s.")
     # clustered_df.collect()
     print(f"Overall deduplication took {time.time() - overall_start_time:.2f}s.")
-    # Count the number of documents in each cluster
-    print("Calculating cluster value counts")
-    count_start_time = time.time()
-    
-    # Group by prediction (cluster ID) and count
-    cluster_counts = clustered_df.groupBy("prediction").count()
-    
-    # Sort by cluster ID for better readability
-    cluster_counts = cluster_counts.orderBy("prediction")
-    
-    # Show the counts
-    print("Cluster value counts:")
-    cluster_counts.show(k + 10, truncate=False)  # Show all clusters plus some buffer
-    
-    # Calculate some statistics about cluster sizes
-    count_list = [row["count"] for row in cluster_counts.collect()]
-    if count_list:
-        print(f"Cluster size statistics:")
-        print(f"  Min cluster size: {min(count_list)}")
-        print(f"  Max cluster size: {max(count_list)}")
-        print(f"  Avg cluster size: {sum(count_list)/len(count_list):.2f}")
-    
-    print(f"Cluster counting completed in {time.time() - count_start_time:.2f}s.")
     
 
     return clustered_df, 0
