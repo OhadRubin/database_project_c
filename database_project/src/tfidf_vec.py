@@ -155,6 +155,7 @@ def run_sklearn_vectorization(
     vector_df.show()
     print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
     df_with_id.unpersist() # Unpersist input now
+    vector_df.collect()
     return vector_df
 
 
