@@ -206,6 +206,7 @@ def tfidf_minhash(
     min_ngram_size: int = None, # Unused
     threshold: float = 0.8,
     n_components: int = 128,
+    k: int = 10,
     ) -> Tuple[DataFrame, int]:
     """
     Performs TF-IDF (sklearn) -> KMeans (Spark ML) -> Per-Cluster Similarity Check (Driver).
@@ -216,9 +217,19 @@ def tfidf_minhash(
     df = df.repartition(100)
 
     clustered_df = tfidf_cluster(spark, df, column, n_components, k)
+    
+    
     clustered_df.show()
-    clustered_df.collect()
+    
+    
+    # Sort the dataframe by prediction (cluster ID)
+    print("Sorting dataframe by prediction (cluster ID)")
+    sort_start_time = time.time()
+    clustered_df = clustered_df.orderBy("prediction")
+    print(f"Sorting completed in {time.time() - sort_start_time:.2f}s.")
+    # clustered_df.collect()
+    print(f"Overall deduplication took {time.time() - overall_start_time:.2f}s.")
     
 
-    return None, 0
+    return clustered_df, 0
 
