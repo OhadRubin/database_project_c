@@ -182,20 +182,19 @@ def tfidf_cluster(spark: SparkSession, df: DataFrame, column: str, n_components:
     vector_df.unpersist() # Unpersist previous stage
     # This ensures we have both the features and all original columns
     vector_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
-    print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
-    print(f"Joined dataframe has {vector_df.count()} rows")
+    num_records = vector_df.count()
     
-    # print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
+    print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
+    print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
     kmeans = SparkKMeans(k=k, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
     kmeans_start_time = time.time()
     sample_df = vector_df.limit(10000)
     kmeans_model = kmeans.fit(sample_df)
-    print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
-    kmeans_inf_time = time.time()
-    # vector_df = vector_df.repartition(10000)
+
     clustered_df = kmeans_model.transform(vector_df)
-    print(f"KMeans inference took {time.time() - kmeans_inf_time:.2f}s.")
     clustered_df = clustered_df.drop("features")
+    clustered_df.show()
+    print(f"KMeans took {time.time() - kmeans_start_time:.2f}s.")
     return clustered_df
 
 
@@ -229,6 +228,7 @@ def tfidf_minhash(
     print("Sorting dataframe by prediction (cluster ID)")
     sort_start_time = time.time()
     clustered_df = clustered_df.orderBy("prediction")
+    clustered_df.show()
     print(f"Sorting completed in {time.time() - sort_start_time:.2f}s.")
     # clustered_df.collect()
     print(f"Overall deduplication took {time.time() - overall_start_time:.2f}s.")
