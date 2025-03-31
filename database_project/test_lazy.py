@@ -12,35 +12,39 @@ from pyspark import SparkConf
 from pyspark.sql import SparkSession
 import socket
 
-class LazyBroadcast:
-    def __init__(self, sc, initializer):
-        self.sc = sc
-        self.initializer = initializer
-        self._broadcast_var = None
 
-    def get(self):
-        if self._broadcast_var is None:
-            data = self.initializer()
-            self._broadcast_var = self.sc.broadcast(data)
-        return self._broadcast_var.value
+# Global for lazy initialization on executors
+EXECUTOR_BROADCAST_DATA = None
 
-def expensive_computation():
-    hostname = socket.gethostname()
-    print(f"Broadcast initialized on driver node: {hostname}")
-    return {"a": 1, "b": 2, "c": 3}
+# Simulate a heavy model or resource initialization 
+def load_heavy_resource():
+    """Simulate loading a heavy resource like a large ML model"""
+    time.sleep(5)  # Simulate expensive load operation
+    print(f"Broadcast initialized on {socket.gethostname()}")
+    return {"lookup_table": {
+        "a": "apple",
+        "b": "banana",
+        "c": "cherry",
+        "d": "date"
+    }}
 
-def map_func(x):
-    hostname = socket.gethostname()
-    data = lazy_broadcast.get()
-    print(f"Executor node {hostname} accessed broadcast variable.")
-    return (x, data.get(x, "Not Found"))
-
+def map_func(item):
+    """Function that uses the lazy-initialized broadcast variable"""
+    global EXECUTOR_BROADCAST_DATA
+    
+    # Lazy initialization - only happens once per executor process
+    if EXECUTOR_BROADCAST_DATA is None:
+        EXECUTOR_BROADCAST_DATA = bc_data.value
+        print(f"Executor node {socket.gethostname()} accessing broadcast data")
+    
+    # Use the initialized resource
+    lookup = EXECUTOR_BROADCAST_DATA["lookup_table"]
+    result = lookup.get(item, "unknown")
+    return f"{item} -> {result}"
 
 
 if __name__ == "__main__":
-    
-    # Initialize Spark with Ray or standard configuration
-
+    # Parse command line arguments
     import ray
     import raydp
     ray.init(address='auto')
@@ -56,14 +60,19 @@ if __name__ == "__main__":
             'spark.local.dir': '/dev/shm/pyspark_dir',
             'spark.debug.maxToStringFields': '100',
             'spark.driver.memory': '4g',
+            'spark.dynamicAllocation.enabled': 'false',
+            'spark.python.worker.reuse': 'true'
         }
     )
+
 
     # Get SparkContext
     sc = spark.sparkContext
     
-    # Create the lazy broadcast variable
-    lazy_broadcast = LazyBroadcast(sc, expensive_computation)
+    # Create the broadcast variable with heavy resource data
+    heavy_data = load_heavy_resource()
+    bc_data = sc.broadcast(heavy_data)
+    print(f"Broadcast created on driver: {socket.gethostname()}")
     
     # Create an RDD and test the lazy broadcast variable
     start_time = time.time()
@@ -71,11 +80,19 @@ if __name__ == "__main__":
     result = rdd.map(map_func).collect()
     end_time = time.time()
     
-    print("Final Result:", result)
+    # Show only a sample of results to avoid excessive output
+    print("Sample Results:", result[:5])
+    print(f"Total Results: {len(result)}")
     print(f"Execution time: {end_time - start_time:.2f} seconds")
     
-
+    # Clean up if using Ray
+    if args.use_ray:
+        raydp.stop_spark()
+        ray.shutdown()
+    else:
+        spark.stop()
     
+
 """
 To test the lazy initialization of a broadcast variable on multiple nodes, you should:
 
