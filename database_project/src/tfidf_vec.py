@@ -202,8 +202,8 @@ def tfidf_minhash(
     joined_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
     print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
     print(f"Joined dataframe has {joined_df.count()} rows")
-    joined_df.show()
     joined_df.collect()
+    joined_df.show()
     
     # if vector_df_ml.rdd.isEmpty():
     #     print("No valid Spark ML vectors created. Returning original data.")
