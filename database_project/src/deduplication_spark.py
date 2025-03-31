@@ -512,6 +512,7 @@ if __name__ == "__main__":
                             # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
                             # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
                             'spark.driver.memory': '64g',
+                            "spark.driver.maxResultSize": "10g"
                         })
             
         else:
@@ -521,6 +522,7 @@ if __name__ == "__main__":
             conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
             conf.set("spark.driver.memory", "64g")
             conf.set("spark.executor.memory", "64g")
+            conf.set("spark.driver.maxResultSize", "10g")
             spark = SparkSession.builder.config(conf=conf).getOrCreate()
             num_nodes=1
             
