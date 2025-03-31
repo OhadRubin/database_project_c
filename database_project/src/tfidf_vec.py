@@ -100,7 +100,7 @@ def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, 
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
     print(f"Starting Sklearn Vectorization Training: Components={n_components}, SampleFit={max_sample_fit}")
     fit_start_time = time.time()
-    df = df.repartition(100)
+    
 
     # Ensure __id__ exists, cache input
     if "__id__" not in df.columns:
@@ -181,6 +181,7 @@ def tfidf_minhash(
     print(f"Starting TF-IDF + Clustering Deduplication: Threshold={threshold}, N_Components={n_components}")
     overall_start_time = time.time()
     original_cols = df.columns # Keep track of original columns
+    df = df.repartition(100)
 
     # === Step 1: TF-IDF Vectorization (Sklearn Fit/Transform) ===
     pipeline, df_with_id = train_sklearn_vectorization(df, column, n_components)
@@ -198,6 +199,7 @@ def tfidf_minhash(
     print("Joining vector features with original data")
     join_start_time = time.time()
     # Join the ML vector features back with the original dataframe
+    vector_df.unpersist() # Unpersist previous stage
     # This ensures we have both the features and all original columns
     joined_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
     print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
@@ -210,17 +212,21 @@ def tfidf_minhash(
     #     vector_df.unpersist()
     #     return df, 0
     # vector_df_ml.persist(StorageLevel.MEMORY_AND_DISK) # Cache ML vectors
-    # vector_df.unpersist() # Unpersist previous stage
 
     # # === Step 3: Spark ML KMeans Clustering ===
     # num_records = vector_df_ml.count()
     # k = max(2, min(20, int(math.sqrt(num_records / 100)))) # Heuristic for K
     # print(f"Running Spark ML KMeans with k={k} on {num_records} records.")
-    # kmeans = SparkKMeans(k=k, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
-    # kmeans_start_time = time.time()
-    # kmeans_model = kmeans.fit(vector_df_ml)
-    # print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
-    # clustered_df = kmeans_model.transform(vector_df_ml)
+    kmeans = SparkKMeans(k=10, seed=42, featuresCol="features", predictionCol="prediction", maxIter=20)
+    kmeans_start_time = time.time()
+    kmeans_model = kmeans.fit(joined_df)
+    print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
+    clustered_df = kmeans_model.transform(vector_df_ml)
+    clustered_df = clustered_df.drop("features")
+    
+    clustered_df.show()
+    clustered_df.collect()
+    
     # # Keep __id__, original tfidf_features (needed for similarity), and prediction
     # clustered_df = clustered_df.select("__id__", "tfidf_features", "prediction")
     # clustered_df.persist(StorageLevel.MEMORY_AND_DISK) # Cache clustered results
