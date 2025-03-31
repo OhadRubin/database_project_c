@@ -91,7 +91,7 @@ def _transform_partition_sklearn(
                 
         features = EXECUTOR_PIPELINE.transform(batch_texts)
         for i, doc_id_in_batch in enumerate(batch_ids):
-            yield (doc_id_in_batch, features[i])
+            yield (doc_id_in_batch, features[i].tolist())
         
 
     # Process final partial batch
@@ -189,7 +189,7 @@ def tfidf_minhash(
 
 
     # # === Step 2: Convert to Spark ML Vectors ===
-    to_vector_udf = F.udf(lambda x: MLVectors.dense(x.tolist()) if x else None, VectorUDT())
+    to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
     vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
     vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
     # Drop the tfidf_features column as it's no longer needed
