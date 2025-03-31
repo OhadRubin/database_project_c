@@ -91,22 +91,14 @@ def _transform_partition_sklearn(
                 
         features = EXECUTOR_PIPELINE.transform(batch_texts)
         for i, doc_id_in_batch in enumerate(batch_ids):
-            yield (doc_id_in_batch, features[i].tolist())
+            yield (doc_id_in_batch, features[i])
         
 
     # Process final partial batch
 
-def run_sklearn_vectorization(
-    spark: SparkSession,
-    df: DataFrame,
-    column: str,
-    n_components: int,
-    random_seed: int = 42,
-    max_sample_fit: int = 5000,
-    map_partitions_batch_size: int = 10000
-    ) -> DataFrame:
+def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, random_seed: int = 42, max_sample_fit: int = 5000, ) -> DataFrame:
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
-    print(f"Starting Sklearn Vectorization: Components={n_components}, SampleFit={max_sample_fit}, BatchSize={map_partitions_batch_size}")
+    print(f"Starting Sklearn Vectorization Training: Components={n_components}, SampleFit={max_sample_fit}")
     fit_start_time = time.time()
     df = df.repartition(100)
 
@@ -132,13 +124,16 @@ def run_sklearn_vectorization(
     
     pipeline = get_sklearn_feature_pipeline(n_components, random_seed)
     pipeline.fit(text_sample)
-    
-    
     print(f"Pipeline fitting took {time.time() - fit_start_time:.2f}s.")
+    return pipeline, df_with_id
+    
+def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df_with_id: DataFrame, column: str, map_partitions_batch_size ) -> DataFrame:
+    
 
     # Broadcast pipeline
     bc_pipeline = spark.sparkContext.broadcast(pipeline)
     print(f"Broadcasted fitted pipeline.")
+    
 
     # Define schema for output RDD
     from pyspark.sql.types import StructType, StructField, LongType, ArrayType, DoubleType
@@ -149,6 +144,8 @@ def run_sklearn_vectorization(
 
     # Transform full dataset
     print("Applying distributed transformation...")
+    
+    print(f"Starting Sklearn Vectorization Inference: BatchSize={map_partitions_batch_size}")
     transform_start_time = time.time()
     # This code transforms the text data into TF-IDF vectors in a distributed manner:
     # 1. Selects only the document ID and text column from the DataFrame
@@ -163,7 +160,7 @@ def run_sklearn_vectorization(
     vector_df.show()
     print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
     df_with_id.unpersist() # Unpersist input now
-    vector_df.collect()
+    # vector_df.collect()
     return vector_df
 
 
@@ -186,16 +183,28 @@ def tfidf_minhash(
     original_cols = df.columns # Keep track of original columns
 
     # === Step 1: TF-IDF Vectorization (Sklearn Fit/Transform) ===
-    vector_df = run_sklearn_vectorization(spark, df, column, n_components)
-    # vector_df.persist(StorageLevel.MEMORY_AND_DISK) # Cache vectors
-    # if vector_df.rdd.isEmpty():
-    #     print("Vectorization resulted in an empty DataFrame. Returning original data.")
-    #     return df, 0
+    pipeline, df_with_id = train_sklearn_vectorization(df, column, n_components)
+    vector_df = inference_sklearn_vectorization(spark, pipeline, df_with_id, column, map_partitions_batch_size=1000)
+
 
     # # === Step 2: Convert to Spark ML Vectors ===
-    # to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
-    # vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
-    # vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
+    to_vector_udf = F.udf(lambda x: MLVectors.dense(x) if x else None, VectorUDT())
+    vector_df_ml = vector_df.withColumn("features", to_vector_udf(F.col("tfidf_features")))
+    vector_df_ml = vector_df_ml.filter(F.col("features").isNotNull()).select("__id__", "features", "tfidf_features")
+    # Drop the tfidf_features column as it's no longer needed
+    vector_df_ml = vector_df_ml.drop("tfidf_features")
+    
+    # === Step 2.5: Join with original data ===
+    print("Joining vector features with original data")
+    join_start_time = time.time()
+    # Join the ML vector features back with the original dataframe
+    # This ensures we have both the features and all original columns
+    joined_df = vector_df_ml.join(df_with_id, on="__id__", how="inner")
+    print(f"Join operation completed in {time.time() - join_start_time:.2f}s.")
+    print(f"Joined dataframe has {joined_df.count()} rows")
+    joined_df.show()
+    joined_df.collect()
+    
     # if vector_df_ml.rdd.isEmpty():
     #     print("No valid Spark ML vectors created. Returning original data.")
     #     vector_df.unpersist()
