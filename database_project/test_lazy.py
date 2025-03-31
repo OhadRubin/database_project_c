@@ -48,7 +48,8 @@ if __name__ == "__main__":
     import ray
     import raydp
     ray.init(address='auto')
-    num_nodes = len([x for x in ray.nodes() if x["alive"]])
+    num_nodes = len([x for x in ray.nodes() if x['alive']])
+    # python3.10 -c 'import ray; print(len([x for x in ray.nodes() if x['alive']]))'
     print(f"Running with Ray on {num_nodes} nodes")
     
     spark = raydp.init_spark(

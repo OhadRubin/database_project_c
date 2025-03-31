@@ -67,10 +67,10 @@ if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
     # Start Ray in head mode
     if $IS_HEAD; then
         $RAY_EXEC start --head --disable-usage-stats
-        sleep 5
+        # sleep 5
         echo "Ray cluster started in head mode"
     else
-        sleep 5
+        # sleep 5
         $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block
         echo "Ray cluster joined as worker node"
     fi
@@ -78,11 +78,24 @@ else
     echo "Ray cluster is already running"
 fi
 
-$RAY_EXEC status
-sleep 5
+# $RAY_EXEC status
+# sleep 5
+# $RAY_EXEC status
 
-
+# Wait until we have 10 nodes in the Ray cluster
+echo "Waiting for 10 nodes to join the Ray cluster..."
+while true; do
+    NODE_COUNT=$(python3.10 -c 'import ray; ray.init(address="auto"); print(len([x for x in ray.nodes() if x["alive"]]))')
+    echo "Current node count: $NODE_COUNT"
+    if [ "$NODE_COUNT" -ge 10 ]; then
+        echo "All 10 nodes are now available in the Ray cluster"
+        break
+    fi
+    echo "Waiting for more nodes to join... (sleeping 10 seconds)"
+    sleep 1
+done
 $RAY_EXEC status
+
 
 SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
