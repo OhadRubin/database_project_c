@@ -44,7 +44,6 @@ def number_normalizer(tokens):
 
 
 class NumberNormalizingVectorizer(TfidfVectorizer):
-    # this vectorizer replaces numbers with #NUMBER token
     def build_tokenizer(self):
         tokenize = super().build_tokenizer()
         return lambda doc: list(number_normalizer(tokenize(doc)))
@@ -59,8 +58,7 @@ def get_sklearn_feature_pipeline(n_components, random_seed):
                             verbose=True)
     return vectorizer
 
-# --- TF-IDF Vectorization Function (using sklearn fit/transform) ---
-# Globals for Lazy Initialization on Executors for the pipeline transform part
+
 EXECUTOR_PIPELINE: Optional[Pipeline] = None
 
 import more_itertools
@@ -72,13 +70,11 @@ def _transform_partition_sklearn(
     ) -> Iterator[Tuple[int, List[float]]]:
     """Helper function run by mapPartitions to transform data using broadcasted sklearn pipeline."""
     global EXECUTOR_PIPELINE
-    # print(f"Executor node {socket.gethostname()} accessing broadcast data")
     # Lazy init of model from broadcast *once per worker*
     
     if EXECUTOR_PIPELINE is None:
         pid = os.getpid()
         try:
-            # print(f"EXECUTOR ({pid}): Initializing pipeline from broadcast {bc_pipeline_broadcast.id}") # Debug
             EXECUTOR_PIPELINE = bc_pipeline_broadcast.value
         except Exception as e:
             print(f"EXECUTOR ({pid}): ERROR initializing pipeline: {e}") # Use print as logger might not be setup
@@ -127,14 +123,10 @@ def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, 
     print(f"Pipeline fitting took {time.time() - fit_start_time:.2f}s.")
     return pipeline, df_with_id
     
-def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df_with_id: DataFrame, column: str, map_partitions_batch_size ) -> DataFrame:
-    
-
+def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df_with_id: DataFrame, column: str, map_partitions_batch_size ) -> DataFrame:    
     # Broadcast pipeline
     bc_pipeline = spark.sparkContext.broadcast(pipeline)
     print(f"Broadcasted fitted pipeline.")
-    
-
     # Define schema for output RDD
     from pyspark.sql.types import StructType, StructField, LongType, ArrayType, DoubleType
     vector_schema = StructType([
