@@ -60,17 +60,14 @@ else
     IS_HEAD=false
 fi
 
-
 echo "Checking Ray cluster status..."
 if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
     echo "Ray cluster is not running. Starting Ray cluster..."
     # Start Ray in head mode
     if $IS_HEAD; then
         $RAY_EXEC start --head --disable-usage-stats
-        # sleep 5
         echo "Ray cluster started in head mode"
     else
-        # sleep 5
         $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block
         echo "Ray cluster joined as worker node"
     fi
@@ -78,9 +75,6 @@ else
     echo "Ray cluster is already running"
 fi
 
-# $RAY_EXEC status
-# sleep 5
-# $RAY_EXEC status
 
 # Wait until we have 10 nodes in the Ray cluster
 echo "Waiting for 10 nodes to join the Ray cluster..."
@@ -119,7 +113,7 @@ else
     echo "Skipping deduplication script on worker node"
 fi
 
-sleep 20
+sleep 600
 # for NUM_FILES in 1 5 10 20 30 40; do
 #     COMMAND="$SCRIPT --limit_files $NUM_FILES"
 #     rm -rf /dev/shm/c4_outputs 

@@ -17,9 +17,7 @@ import math
 import time
 from functools import reduce
 from typing import Dict, Any, Iterator, List, Tuple, Optional, Set
-from sklearn.feature_extraction import text
 # Import scikit-learn components
-from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from sklearn.decomposition import TruncatedSVD
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer
@@ -28,6 +26,16 @@ from pyspark.ml.linalg import Vectors as MLVectors, VectorUDT
 from pyspark.ml.clustering import KMeans as SparkKMeans
 from pyspark.storagelevel import StorageLevel
 import socket
+
+from sklearn.feature_extraction import text
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
+
+# Get the logger for TfidfVectorizer
+tfidf_logger = logging.getLogger('sklearn.feature_extraction.text')
+# Ignore warnings about stop words inconsistency
+import warnings
+warnings.filterwarnings('ignore', message="Your stop_words may be inconsistent with your preprocessing.*", category=UserWarning)
+
 
 
 
@@ -95,7 +103,7 @@ def run_sklearn_vectorization(
     n_components: int,
     random_seed: int = 42,
     max_sample_fit: int = 5000,
-    map_partitions_batch_size: int = 100
+    map_partitions_batch_size: int = 10000
     ) -> DataFrame:
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
     print(f"Starting Sklearn Vectorization: Components={n_components}, SampleFit={max_sample_fit}, BatchSize={map_partitions_batch_size}")
