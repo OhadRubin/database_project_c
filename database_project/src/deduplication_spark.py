@@ -374,7 +374,9 @@ def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngra
     return corpus_rdd.map(lambda x: (x[0], hash_content(x[1], num_perm, ngram_size, min_ngram_size, permutations)))
 
 
-from src.tfidf_vec import tfidf_minhash
+# Create a reference to the tfidf_minhash function that we'll use later
+tfidf_minhash = None  # This will be populated after adding the file to SparkContext
+
 def minhash_lsh(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
     print(spark)
     B, R = optimal_param(threshold, num_perm)
@@ -558,6 +560,13 @@ if __name__ == "__main__":
         current_dir = os.path.dirname(os.path.abspath(__file__))
         # Add SVD module to Spark context
         spark.sparkContext.addPyFile(os.path.join(current_dir, "svd.py"))
+        # Add tfidf_vec to Spark context - need to make the module structure correct
+        tfidf_vec_path = os.path.join(current_dir, "tfidf_vec.py")
+        spark.sparkContext.addPyFile(tfidf_vec_path)
+        
+        # Now we can import the function directly
+        from tfidf_vec import tfidf_minhash
+        
         # Track original record count
         original_count = df.count()
         

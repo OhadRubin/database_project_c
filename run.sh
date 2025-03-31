@@ -86,7 +86,7 @@ $RAY_EXEC status
 SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
 
-SCRIPT="$SCRIPT --implementation tfidf_minhash"
+# SCRIPT="$SCRIPT --implementation tfidf_minhash"
 # SCRIPT="$SCRIPT  --num_perm 1024 --threshold 0.9"
 
 # Run only on head node
