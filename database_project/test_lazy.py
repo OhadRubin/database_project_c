@@ -86,12 +86,9 @@ if __name__ == "__main__":
     print(f"Execution time: {end_time - start_time:.2f} seconds")
     
     # Clean up if using Ray
-    if args.use_ray:
-        raydp.stop_spark()
-        ray.shutdown()
-    else:
-        spark.stop()
-    
+    raydp.stop_spark()
+    ray.shutdown()
+
 
 """
 To test the lazy initialization of a broadcast variable on multiple nodes, you should:
