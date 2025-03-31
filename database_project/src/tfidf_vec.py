@@ -100,6 +100,7 @@ def run_sklearn_vectorization(
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
     print(f"Starting Sklearn Vectorization: Components={n_components}, SampleFit={max_sample_fit}, BatchSize={map_partitions_batch_size}")
     fit_start_time = time.time()
+    df = df.repartition(100)
 
     # Ensure __id__ exists, cache input
     if "__id__" not in df.columns:
@@ -151,7 +152,7 @@ def run_sklearn_vectorization(
         lambda rows_iter: _transform_partition_sklearn(rows_iter, bc_pipeline, column, map_partitions_batch_size)
     )
     vector_df = spark.createDataFrame(vectorized_rdd, schema=vector_schema)
-
+    vector_df.show()
     print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
     df_with_id.unpersist() # Unpersist input now
     return vector_df
