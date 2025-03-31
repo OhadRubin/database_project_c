@@ -92,7 +92,12 @@ def _transform_partition_sklearn(
 
     # Process final partial batch
 
-def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, random_seed: int = 42, max_sample_fit: int = 50000, ) -> DataFrame:
+def train_sklearn_vectorization( df: DataFrame,
+                                column: str,
+                                n_components: int,
+                                random_seed: int = 42,
+                                max_sample_fit: int = 50000, 
+                                ) -> DataFrame:
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
     print(f"Starting Sklearn Vectorization Training: Components={n_components}, SampleFit={max_sample_fit}")
     fit_start_time = time.time()
@@ -123,7 +128,13 @@ def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, 
     print(f"Pipeline fitting took {time.time() - fit_start_time:.2f}s.")
     return pipeline, df_with_id
     
-def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df_with_id: DataFrame, column: str, map_partitions_batch_size ) -> DataFrame:    
+def inference_sklearn_vectorization(spark: SparkSession,
+                                    pipeline: Pipeline,
+                                    df_with_id: DataFrame,
+                                    column: str,
+                                    map_partitions_batch_size,
+                                    timeit: bool = False,
+                                    ) -> DataFrame:    
     # Broadcast pipeline
     bc_pipeline = spark.sparkContext.broadcast(pipeline)
     print(f"Broadcasted fitted pipeline.")
@@ -149,8 +160,9 @@ def inference_sklearn_vectorization( spark: SparkSession, pipeline: Pipeline, df
         lambda rows_iter: _transform_partition_sklearn(rows_iter, bc_pipeline, column, map_partitions_batch_size)
     )
     vector_df = spark.createDataFrame(vectorized_rdd, schema=vector_schema)
-    vector_df.show()
-    print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
+    if timeit:
+        vector_df.show()
+        print(f"Distributed transformation took {time.time() - transform_start_time:.2f}s.")
     df_with_id.unpersist() # Unpersist input now
     return vector_df
 
