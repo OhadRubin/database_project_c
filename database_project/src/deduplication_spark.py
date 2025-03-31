@@ -559,7 +559,7 @@ if __name__ == "__main__":
         # /home/ohadr/database_project_c/database_project/src/deduplication_spark.py
         current_dir = os.path.dirname(os.path.abspath(__file__))
         # Add SVD module to Spark context
-        spark.sparkContext.addPyFile(os.path.join(current_dir, "svd.py"))
+        # spark.sparkContext.addPyFile(os.path.join(current_dir, "svd.py"))
         # Add tfidf_vec to Spark context - need to make the module structure correct
         tfidf_vec_path = os.path.join(current_dir, "tfidf_vec.py")
         spark.sparkContext.addPyFile(tfidf_vec_path)
