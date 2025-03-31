@@ -96,7 +96,7 @@ def _transform_partition_sklearn(
 
     # Process final partial batch
 
-def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, random_seed: int = 42, max_sample_fit: int = 5000, ) -> DataFrame:
+def train_sklearn_vectorization( df: DataFrame, column: str, n_components: int, random_seed: int = 42, max_sample_fit: int = 50000, ) -> DataFrame:
     """Fits sklearn TF-IDF/SVD on sample, transforms full DataFrame."""
     print(f"Starting Sklearn Vectorization Training: Components={n_components}, SampleFit={max_sample_fit}")
     fit_start_time = time.time()
@@ -191,7 +191,10 @@ def tfidf_cluster(spark: SparkSession, df: DataFrame, column: str, n_components:
     sample_df = vector_df.limit(10000)
     kmeans_model = kmeans.fit(sample_df)
     print(f"KMeans fitting took {time.time() - kmeans_start_time:.2f}s.")
+    kmeans_inf_time = time.time()
+    vector_df = vector_df.repartition(10000)
     clustered_df = kmeans_model.transform(vector_df)
+    print(f"KMeans inference took {time.time() - kmeans_inf_time:.2f}s.")
     clustered_df = clustered_df.drop("features")
     return clustered_df
 
