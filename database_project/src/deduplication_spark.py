@@ -155,8 +155,8 @@ if __name__ == "__main__":
         current_dir = os.path.dirname(os.path.abspath(__file__))
 
         spark.sparkContext.addPyFile(os.path.join(current_dir, "tfidf_vec.py"))
-        # spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec.py"))
-        spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec_test.py"))
+        spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec.py"))
+        # spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec_test.py"))
         spark.sparkContext.addPyFile(os.path.join(current_dir, "minhash.py"))
         
         # Now we can import the function directly

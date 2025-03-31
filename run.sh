@@ -80,12 +80,12 @@ fi
 
 
 # Wait until we have 10 nodes in the Ray cluster
-echo "Waiting for $N_NODES=10 nodes to join the Ray cluster..."
+echo "Waiting for $N_NODES nodes to join the Ray cluster..."
 while true; do
     NODE_COUNT=$(python3.10 -c 'import ray; ray.init(address="auto"); print(len([x for x in ray.nodes() if x["alive"]]))')
     echo "Current node count: $NODE_COUNT"
-    if [ "$NODE_COUNT" -ge 10 ]; then
-        echo "All 10 nodes are now available in the Ray cluster"
+    if [ "$NODE_COUNT" -ge "$N_NODES" ]; then
+        echo "All $N_NODES nodes are now available in the Ray cluster"
         break
     fi
     echo "Waiting for more nodes to join... (sleeping 10 seconds)"
@@ -97,7 +97,8 @@ $RAY_EXEC status
 SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
 
-SCRIPT="$SCRIPT --implementation tfidf_minhash"
+# SCRIPT="$SCRIPT --implementation tfidf_minhash"
+SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 # SCRIPT="$SCRIPT  --num_perm 1024 --threshold 0.9"
 
 # Run only on head node
