@@ -331,43 +331,34 @@ def run_clustering_pipeline(ds, cfg: object):
     # Set the path to your configuration file
 def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
 
-    if not os.path.exists(CONFIG_FILE_PATH):
-         print(f"Error: Configuration file not found at {CONFIG_FILE_PATH}")
-         print("Please create a config file (e.g., based on the dummy example) "
-               "and update CONFIG_FILE_PATH.")
-         # Create a dummy config for demonstration if needed
-         print("Creating a dummy config.json for demonstration...")
-         dummy_config = {
-             "base_dir": "/tmp/ray_clustering_output",
-             "cluster_layout": [5, 3, 2], # Smaller example layout
-             "max_docs": 5000, # Sample size for training
-             "stage1_train_kmeans_bs": 1024,
-             "stage1_inf_kmeans_bs": 4096, # Needed if using JAX prediction
-             "stage1_inf_batch_size": 1000, # Ray batch size for inference
-             "stage1_train_cpus": 70, # Resources for Stage 1 training task
-             "stage2_train_kmeans_bs": 512,
-             "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
-             "stage2_inf_batch_size": 1000,
-             "stage2_train_cpus": 2, # Resources per Stage 2 group task
-             "stage3_train_kmeans_bs": 256,
-             "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
-             "stage3_proc_cpus": 2, # Resources per Stage 3 group task
-             "stage3_min_group_size": 50, # Min size for Stage 3 processing
-             "tfidf_batch_size": 500, # Default batch size if others not set
-             "stage3_dedup": True,
-             "similarity": 0.85,
-             "num_perm": 128,
-             "ngram_size": 5,
-             "train1_ds_kwargs_load": { # Example using a common dataset
-                  "path": "ag_news",
-                  "split": "train" 
-             },
-             "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
-         }
-         with open("config.json", "w") as f:
-             json.dump(dummy_config, f, indent=4)
-         CONFIG_FILE_PATH = "config.json"
-         print(f"Dummy config written to {CONFIG_FILE_PATH}. Please adapt it.")
+    dummy_config = {
+        "base_dir": "/tmp/ray_clustering_output",
+        "cluster_layout": [5, 3, 2], # Smaller example layout
+        "max_docs": 5000, # Sample size for training
+        "stage1_train_kmeans_bs": 1024,
+        "stage1_inf_kmeans_bs": 4096, # Needed if using JAX prediction
+        "stage1_inf_batch_size": 1000, # Ray batch size for inference
+        "stage1_train_cpus": 70, # Resources for Stage 1 training task
+        "stage2_train_kmeans_bs": 512,
+        "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
+        "stage2_inf_batch_size": 1000,
+        "stage2_train_cpus": 2, # Resources per Stage 2 group task
+        "stage3_train_kmeans_bs": 256,
+        "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
+        "stage3_proc_cpus": 2, # Resources per Stage 3 group task
+        "stage3_min_group_size": 50, # Min size for Stage 3 processing
+        "tfidf_batch_size": 500, # Default batch size if others not set
+        "stage3_dedup": True,
+        "similarity": 0.85,
+        "num_perm": 128,
+        "ngram_size": 5,
+        "train1_ds_kwargs_load": { # Example using a common dataset
+            "path": "ag_news",
+            "split": "train" 
+        },
+        "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
+    }
+    
 
     # --- Run Pipeline ---
     start_time = time.time()
