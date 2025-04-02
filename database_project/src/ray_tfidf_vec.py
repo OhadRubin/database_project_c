@@ -353,7 +353,22 @@ def fit_models_remote(
     stage_label: str, # e.g., "Stage1", "Stage2_GroupX", etc.
     kmeans_train_batch_size_key: str, # e.g., "stage1_train_kmeans_bs"
 ) -> Tuple[object, object]:
-    """Fits vectorizer and KMeans on sample data."""
+    """Fits vectorizer and KMeans on sample data.
+    
+    This is a Ray remote function that fits the models on the provided data.
+    
+    Args:
+        cfg: Configuration object
+        sample_data: DataFrame containing training data
+        n_clusters: Number of clusters for KMeans
+        stage_label: Label for logging purposes
+        kmeans_train_batch_size_key: Config key for batch size
+        
+    Returns:
+        A tuple of (vectorizer, kmeans) model objects (not references).
+        When called with .remote(), this function returns a single Ray ObjectRef 
+        pointing to this tuple.
+    """
 
 
     texts = sample_data["text"].tolist()
@@ -400,34 +415,41 @@ def process_stage2_group(
     group_df: pd.DataFrame,
     cluster_a_id: int,
     cfg: object,
-) -> Tuple[int, Tuple[ray.ObjectRef, ray.ObjectRef]]:
-    """Samples, fits Stage 2 models for a group, returns cluster ID and model refs."""
+) -> Tuple[int, ray.ObjectRef]:
+    """Samples, fits Stage 2 models for a group, returns cluster ID and model reference.
+    
+    Args:
+        group_df: DataFrame containing data for this cluster group
+        cluster_a_id: The cluster ID from stage 1
+        cfg: Configuration object
+        
+    Returns:
+        Tuple of (cluster_a_id, models_ref) where models_ref is a Ray ObjectRef 
+        pointing to a tuple of (vectorizer, kmeans) models
+    """
     n_clusters_b = cfg.cluster_layout[1]
     max_docs_sample = cfg.get("stage2_max_docs_sample", cfg.max_docs)
     stage_label = f"Stage2_A={cluster_a_id}"
 
     if group_df.empty:
         print(f"Warning [{stage_label}]: Empty group received.")
-        return cluster_a_id, (None, None)
+        return cluster_a_id, None
 
     sample_df = group_df.sample(n=min(len(group_df), max_docs_sample), random_state=42)
 
     # Use the generic fitting task
-    vectorizer, kmeans = fit_models_remote.remote(
+    models_ref = fit_models_remote.remote(
         cfg=cfg,
         sample_data=sample_df,
         n_clusters=n_clusters_b,
         stage_label=stage_label,
         kmeans_train_batch_size_key="stage2_train_kmeans_bs"
     )
-    # We get back refs directly here
-    vectorizer_ref, kmeans_ref = vectorizer, kmeans
-
-    # Note: If fit_models_remote returned actual objects, we would ray.put them here.
-    # Since it's already remote, it returns refs.
+    # Don't try to unpack the Ray object reference
+    
     print(f"[{stage_label}] Model fitting tasks submitted.")
-    # We return the *refs* to the models, not the models themselves
-    return cluster_a_id, (vectorizer_ref, kmeans_ref)
+    # We return the cluster_id and the reference to the models
+    return cluster_a_id, models_ref
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
@@ -452,11 +474,19 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Sample size: {len(sample_df)}")
 
     # Fit Stage 1 models remotely
-    vectorizer_s1_ref, kmeans_s1_ref = fit_models_remote.options(
+    models_s1_ref = fit_models_remote.options(
             num_cpus=cfg.stage1_train_cpus
     ).remote(
             cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
     )
+    
+    # Get the actual models from the reference
+    vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
+    
+    # Put them back as separate references
+    vectorizer_s1_ref = ray.put(vectorizer_s1)
+    kmeans_s1_ref = ray.put(kmeans_s1)
+    
     # Inference Stage 1
     print("Running Stage 1 inference...")
     map_s1_func = partial(apply_models_batch,
@@ -482,7 +512,7 @@ def run_clustering_pipeline(ds, cfg: object):
     print("Training Stage 2 models (one per Stage 1 cluster)...")
     stage2_group_processor_partial = partial(process_stage2_group, cfg=cfg)
     
-    # process_stage2_group returns (cluster_a_id, (vec_ref, kmeans_ref))
+    # process_stage2_group returns (cluster_a_id, models_ref)
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
         stage2_group_processor_partial,
         ray_remote_args={
@@ -496,7 +526,7 @@ def run_clustering_pipeline(ds, cfg: object):
     stage2_model_results = stage2_model_results_ds.take_all() # List of dicts
     
     # Build dictionary mapping cluster_A ID to model refs
-    # Results look like: [{'cluster_A': 0, 'map_groups_output': (v0_ref, k0_ref)}, ...]
+    # Results look like: [{'cluster_A': 0, 'map_groups_output': models_ref}, ...]
     stage2_models_dict = {
         item[CLUSTER_A_COL]: item['map_groups_output']
         for item in stage2_model_results
@@ -507,19 +537,37 @@ def run_clustering_pipeline(ds, cfg: object):
     
     print("Running Stage 2 inference...")
     def apply_stage2_batch(batch: pd.DataFrame, models_dict_ref) -> pd.DataFrame:
-        models_dict = ray.get(models_dict_ref) # Get dict {cluster_id: (vec_ref, kmeans_ref)}
+        models_dict = ray.get(models_dict_ref) # Get dict {cluster_id: models_ref}
         batch[CLUSTER_B_COL] = -1 # Initialize column
         
         # Process each cluster_A group within the batch
         for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
-            vec_ref, kmeans_ref = models_dict[cluster_a_id]
-            processed_group = apply_models_batch(
-                group.copy(), # Pass copy to avoid modifying original slice
-                vectorizer_ref=vec_ref,
-                kmeans_ref=kmeans_ref,
-                cluster_col_name=CLUSTER_B_COL # Predict into the target col
-            )
-            batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
+            models_ref = models_dict.get(cluster_a_id)
+            
+            # Skip if no models available for this cluster
+            if models_ref is None:
+                print(f"Warning: No models available for cluster_A={cluster_a_id}")
+                continue
+                
+            # Get the actual models from the reference
+            try:
+                vectorizer, kmeans = ray.get(models_ref)
+                
+                # Skip if any model is None
+                if vectorizer is None or kmeans is None:
+                    print(f"Warning: Missing model components for cluster_A={cluster_a_id}")
+                    continue
+                    
+                processed_group = apply_models_batch(
+                    group.copy(), # Pass copy to avoid modifying original slice
+                    vectorizer_ref=ray.put(vectorizer),
+                    kmeans_ref=ray.put(kmeans),
+                    cluster_col_name=CLUSTER_B_COL # Predict into the target col
+                )
+                batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
+            except Exception as e:
+                print(f"Error processing cluster_A={cluster_a_id}: {str(e)}")
+                continue
 
         return batch
 
