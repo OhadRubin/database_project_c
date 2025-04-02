@@ -568,9 +568,7 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
     print(f"Sample size: {len(sample_df)}")
-    
-    
-    
+
 
     
     
