@@ -626,7 +626,7 @@ def run_clustering_pipeline(ds, cfg: object):
     # process_stage2_group returns (cluster_a_id, models_ref)
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
         process_stage2_group_with_cfg,
-        num_cpus=cfg.stage2_train_cpus
+        num_cpus=cfg.stage2_train_cpus,
         batch_format="pandas"
     )
 
