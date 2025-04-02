@@ -618,11 +618,14 @@ def run_clustering_pipeline(ds, cfg: object):
     print("--- Stage 2 Starting ---")
     # Train Stage 2 models (one per Stage 1 cluster) using map_groups
     print("Training Stage 2 models (one per Stage 1 cluster)...")
-    stage2_group_processor_partial = partial(process_stage2_group, cfg=cfg)
+    
+    # Create a named function instead of using partial directly
+    def process_stage2_group_with_cfg(group_df, cluster_a_id):
+        return process_stage2_group(group_df, cluster_a_id, cfg=cfg)
     
     # process_stage2_group returns (cluster_a_id, models_ref)
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
-        stage2_group_processor_partial,
+        process_stage2_group_with_cfg,
         ray_remote_args={
              "num_cpus": cfg.stage2_train_cpus,
         },
