@@ -531,8 +531,7 @@ def process_stage2_group(
     
     print(f"[{stage_label}] Model fitting tasks submitted.")
     # We return the cluster_id and the reference to the models
-    models_ref_ser = cloudpickle.dumps(models_ref)
-    result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref_ser}
+    result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref}
     result = serialize_objectref_dict(result)
     return pd.DataFrame([result])
 def serialize_objectref_dict(objectref_dict):
