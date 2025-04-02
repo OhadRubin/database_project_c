@@ -686,7 +686,9 @@ def run_clustering_pipeline(ds, cfg: object):
         batch_size=cfg.stage2_inf_batch_size
     )
     
-    final_ds = tagged_ds_B.materialize()
+    final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
+    
+    
     print("Stage 2 inference complete. Schema:", final_ds.schema())
     print("Sample row after Stage 2:", final_ds.take(1)) # Debug
     print("--- Stage 2 Done ---")
@@ -707,6 +709,8 @@ def run_clustering_pipeline(ds, cfg: object):
         output_base_path,
         # Ray automatically handles partitioning based on directory structure
         # partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL, CLUSTER_C_COL] # Specify if needed explicitly
+        partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL], # Specify if needed explicitly
+        min_rows_per_file=10000,
     )
     print("--- Pipeline Finished ---")
 
