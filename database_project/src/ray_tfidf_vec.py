@@ -617,6 +617,11 @@ def run_clustering_pipeline(ds, cfg: object):
     # Collect the model references (assume num stage 1 clusters is manageable)
     print("Collecting Stage 2 model references...")
     stage2_model_results = stage2_model_results_ds.take_all() # List of dicts
+    print("Finished collecting Stage 2 model references...")
+    
+    
+    for item in stage2_model_results:
+        print(item)
     
     # Build dictionary mapping cluster_A ID to model refs
     # Results look like: [{'cluster_A': 0, 'map_groups_output': models_ref}, ...]
