@@ -541,6 +541,8 @@ def deserialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
 
+
+os.makedirs("/tmp/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     limit = cfg.get("ray_max_docs_limit", None)
@@ -554,19 +556,6 @@ def run_clustering_pipeline(ds, cfg: object):
     
     
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
-    
-    
-    # Use Ray to ensure directories exist on all workers
-    @ray.remote
-    def ensure_dir_exists(path):
-        os.makedirs(path, exist_ok=True)
-        return os.path.exists(path)
-    
-    # Create directories on all nodes in the Ray cluster
-    all_nodes_refs = []
-    for node_id in ray.nodes():
-        ref = ensure_dir_exists.options(resources={f"node:{node_id['NodeID']}": 0.001}).remote(output_base_path)
-        all_nodes_refs.append(ref)
     
     
     # Sample for Stage 1 Training
