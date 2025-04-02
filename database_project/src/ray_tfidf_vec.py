@@ -9,7 +9,7 @@ import time
 import os
 from typing import List, Dict, Tuple, Any
 from sklearn.pipeline import Pipeline
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans as SklearnKMeans
 import os
 import numpy as np
 import pandas as pd # Used for type hints, not core logic
@@ -36,6 +36,75 @@ warnings.filterwarnings('ignore', message="Your stop_words may be inconsistent w
 
 import ray
 
+# Try to import JAX for faster distance calculations
+try:
+    import jax
+    import jax.numpy as jnp
+    HAS_JAX = True
+except ImportError:
+    HAS_JAX = False
+    warnings.warn("JAX not found, using NumPy for distance calculations instead (slower).")
+
+
+def jax_pairwise_distance(data1, data2):
+    """Compute pairwise Euclidean distances between two sets of points.
+    
+    If JAX is available, computes distances using JAX for better performance.
+    Otherwise, falls back to NumPy implementation.
+    
+    Args:
+        data1: First set of points, shape (m, d)
+        data2: Second set of points, shape (n, d)
+        
+    Returns:
+        Distance matrix of shape (m, n)
+    """
+    if HAS_JAX:
+        return _jax_pairwise_distance_impl(data1, data2)
+    else:
+        return _numpy_pairwise_distance_impl(data1, data2)
+
+
+def _jax_pairwise_distance_impl(data1, data2):
+    """JAX implementation of pairwise Euclidean distance calculation."""
+    # Convert to jax arrays if they aren't already
+    x1 = jnp.array(data1)
+    x2 = jnp.array(data2)
+    
+    # Compute squared norms of each point
+    x1_norm = jnp.sum(x1**2, axis=1)
+    x2_norm = jnp.sum(x2**2, axis=1)
+    
+    # Compute the distance matrix using the formula:
+    # ||x - y||^2 = ||x||^2 + ||y||^2 - 2 * x.dot(y)
+    x1_x2 = jnp.dot(x1, x2.T)
+    dist_mat = x1_norm[:, jnp.newaxis] + x2_norm[jnp.newaxis, :] - 2.0 * x1_x2
+    
+    # To avoid numerical issues, enforce non-negative distances
+    dist_mat = jnp.maximum(dist_mat, 0.0)
+    
+    # Return Euclidean distance (square root of squared distances)
+    return jnp.sqrt(dist_mat)
+
+
+def _numpy_pairwise_distance_impl(data1, data2):
+    """NumPy implementation of pairwise Euclidean distance calculation."""
+    # Ensure inputs are numpy arrays
+    x1 = np.asarray(data1)
+    x2 = np.asarray(data2)
+    
+    # Compute squared norms
+    x1_norm = np.sum(x1**2, axis=1)
+    x2_norm = np.sum(x2**2, axis=1)
+    
+    # Compute distances
+    x1_x2 = np.dot(x1, x2.T)
+    dist_mat = x1_norm[:, np.newaxis] + x2_norm[np.newaxis, :] - 2.0 * x1_x2
+    
+    # Enforce non-negative distances and take square root
+    dist_mat = np.maximum(dist_mat, 0.0)
+    return np.sqrt(dist_mat)
+
 
 def number_normalizer(tokens):
     return ("#NUMBER" if token[0].isdigit() else token for token in tokens)
@@ -46,6 +115,207 @@ class NumberNormalizingVectorizer(TfidfVectorizer):
         tokenize = super().build_tokenizer()
         return lambda doc: list(number_normalizer(tokenize(doc)))
     
+
+
+class KMeans:
+    """K-Means implementation with support for online learning and balanced clusters.
+    
+    This implementation extends sklearn.cluster.KMeans with additional features:
+    
+    1. Online learning - Update cluster centers with new batches of data without retraining
+    2. Balanced clustering - Ensure clusters have approximately equal number of points
+    3. JAX acceleration - Use JAX for faster distance computations when available
+    
+    The standard scikit-learn KMeans implementation doesn't support these features, 
+    particularly online learning which is important for large datasets that can't
+    fit in memory at once.
+    
+    This implementation is designed to work with Ray's distributed processing pipeline
+    for clustering documents using TF-IDF vectorization.
+    
+    Usage Examples:
+    
+    # Standard clustering
+    kmeans = KMeans(n_clusters=5, random_state=42)
+    labels = kmeans.fit_predict(X)
+    
+    # Balanced clustering
+    kmeans = KMeans(n_clusters=5, balanced=True, random_state=42)
+    labels = kmeans.fit_predict(X)
+    
+    # Online learning with batches
+    kmeans = KMeans(n_clusters=5, random_state=42)
+    for i, batch in enumerate(batches):
+        if i == 0:
+            kmeans.fit(batch)  # Initial fit
+        else:
+            kmeans.fit(batch, online=True, iter_k=i)  # Update with new batch
+    
+    # Prediction with new data
+    labels = kmeans.predict(X_new)
+    
+    Args:
+        n_clusters: Number of clusters
+        balanced: If True, try to create equal-sized clusters
+        random_state: Random seed for reproducibility
+        use_jax: Whether to use JAX for distance calculations (faster, if available)
+        **kwargs: Additional arguments passed to sklearn.cluster.KMeans
+    """
+    def __init__(self, n_clusters=8, balanced=False, random_state=None, use_jax=True, **kwargs):
+        self.n_clusters = n_clusters
+        self.balanced = balanced
+        self.random_state = random_state
+        self.use_jax = use_jax
+        self.kmeans_kwargs = kwargs
+        self.cluster_centers_ = None
+        self.inertia_ = None
+        self._is_fitted = False
+        
+        # Initialize the sklearn KMeans model
+        self._sklearn_kmeans = SklearnKMeans(
+            n_clusters=n_clusters,
+            random_state=random_state,
+            **kwargs
+        )
+    
+    def fit(self, X, iter_limit=None, online=False, iter_k=None, **kwargs):
+        """Fit the K-means model to the data.
+        
+        Args:
+            X: Training data
+            iter_limit: Maximum number of iterations (for compatibility)
+            online: If True, update existing centroids instead of recomputing
+            iter_k: Batch number for online learning
+            **kwargs: Additional arguments for sklearn KMeans
+        
+        Returns:
+            Cluster assignments for the training data
+        """
+        X = np.asarray(X)
+        
+        # For the first batch or if not online, initialize centroids
+        if not online or (online and iter_k == 0) or not self._is_fitted:
+            self._sklearn_kmeans = SklearnKMeans(
+                n_clusters=self.n_clusters,
+                random_state=self.random_state,
+                **self.kmeans_kwargs
+            )
+            self._sklearn_kmeans.fit(X)
+            self.cluster_centers_ = self._sklearn_kmeans.cluster_centers_
+            self.inertia_ = self._sklearn_kmeans.inertia_
+            self._is_fitted = True
+            return self._get_labels(X)
+        
+        # For subsequent batches in online learning, compute distances using jax if available
+        if self.use_jax:
+            distances = jax_pairwise_distance(X, self.cluster_centers_)
+            labels = np.argmin(distances, axis=1)
+        else:
+            labels = self._sklearn_kmeans.predict(X)
+        
+        # Update centroids based on new data
+        for i in range(self.n_clusters):
+            # Get points assigned to this cluster
+            cluster_points = X[labels == i]
+            if len(cluster_points) > 0:
+                # Update centroid as weighted average of old and new centroids
+                old_centroid = self.cluster_centers_[i]
+                new_centroid = np.mean(cluster_points, axis=0)
+                # Simple moving average: as iterations progress, give more weight to history
+                weight = min(0.9, 1.0 / (iter_k + 1)) if iter_k is not None else 0.1
+                updated_centroid = (1 - weight) * old_centroid + weight * new_centroid
+                self.cluster_centers_[i] = updated_centroid
+        
+        # Update the sklearn model with the new centroids
+        self._sklearn_kmeans.cluster_centers_ = self.cluster_centers_
+        
+        return self._get_labels(X)
+    
+    def _get_labels(self, X):
+        """Get cluster assignments for X."""
+        X = np.asarray(X)
+        
+        # Compute distances using JAX for better performance when available and enabled
+        if self.use_jax:
+            distances = jax_pairwise_distance(X, self.cluster_centers_)
+        else:
+            distances = self._sklearn_kmeans.transform(X)
+            
+        if self.balanced:
+            # Implement balanced clustering (assign equal points to each cluster)
+            # This is a simple greedy implementation - could be improved
+            n_samples = X.shape[0]
+            target_size = n_samples // self.n_clusters
+            
+            # Start with normal assignments
+            labels = np.argmin(distances, axis=1)
+            
+            # Count points per cluster
+            counts = np.bincount(labels, minlength=self.n_clusters)
+            
+            # Iteratively balance clusters
+            for _ in range(3):  # Limit iterations for performance
+                for i in range(self.n_clusters):
+                    if counts[i] <= target_size:
+                        continue
+                    
+                    # Find points that could be reassigned from this cluster
+                    cluster_points = np.where(labels == i)[0]
+                    
+                    # Sort by how well they fit alternative clusters
+                    point_distances = distances[cluster_points]
+                    point_distances[:, i] = np.inf  # Exclude current cluster
+                    alternative_clusters = np.argmin(point_distances, axis=1)
+                    
+                    # Sort points by how close they are to alternative
+                    alt_distances = np.min(point_distances, axis=1)
+                    sorted_indices = np.argsort(alt_distances)
+                    
+                    # Move points to alternative clusters until balance is achieved
+                    for idx in sorted_indices:
+                        if counts[i] <= target_size:
+                            break
+                        
+                        point_idx = cluster_points[idx]
+                        new_cluster = alternative_clusters[idx]
+                        
+                        # Only move if target cluster isn't already too full
+                        if counts[new_cluster] < target_size:
+                            labels[point_idx] = new_cluster
+                            counts[i] -= 1
+                            counts[new_cluster] += 1
+            
+            return labels
+        else:
+            # Use standard k-means assignments
+            return np.argmin(distances, axis=1)
+    
+    def predict(self, X):
+        """Predict the closest cluster for each sample in X."""
+        if not self._is_fitted:
+            raise RuntimeError("Model not fitted yet")
+        
+        X = np.asarray(X)
+        return self._get_labels(X)
+
+    def fit_predict(self, X, **kwargs):
+        """Fit and predict in one step."""
+        self.fit(X, **kwargs)
+        return self.predict(X)
+    
+    def transform(self, X):
+        """Transform X to a cluster-distance space."""
+        if not self._is_fitted:
+            raise RuntimeError("Model not fitted yet")
+        
+        X = np.asarray(X)
+        
+        if self.use_jax:
+            # Return distances to all centroids using JAX
+            return jax_pairwise_distance(X, self.cluster_centers_)
+        else:
+            # Fall back to sklearn's transform
+            return self._sklearn_kmeans.transform(X)
 
 
 def get_sklearn_feature_pipeline(n_components, random_seed):
@@ -341,6 +611,83 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
     # Return the output path where results are stored
     return f"{cfg.base_dir}/ray_output_final_clustered"
     
+def test_kmeans():
+    """Test the KMeans implementation with a simple example."""
+    print("Testing KMeans implementation...")
+    
+    # Generate sample data with clear clusters
+    np.random.seed(42)
+    n_samples = 1000
+    n_features = 10
+    n_clusters = 3
+    
+    # Create clear clusters
+    centers = np.random.randn(n_clusters, n_features) * 5  # Well-separated centers
+    
+    # Generate points around centers
+    X = np.vstack([
+        centers[i] + np.random.randn(n_samples // n_clusters, n_features)
+        for i in range(n_clusters)
+    ])
+    
+    # Shuffle the data
+    np.random.shuffle(X)
+    
+    # Test standard KMeans (without balanced clusters)
+    print("\nTesting standard KMeans...")
+    kmeans_standard = KMeans(n_clusters=n_clusters, balanced=False, random_state=42)
+    labels_standard = kmeans_standard.fit_predict(X)
+    
+    # Count points in each cluster
+    unique, counts = np.unique(labels_standard, return_counts=True)
+    cluster_counts = dict(zip(unique, counts))
+    print(f"Cluster distribution (standard): {cluster_counts}")
+    
+    # Test balanced KMeans
+    print("\nTesting balanced KMeans...")
+    kmeans_balanced = KMeans(n_clusters=n_clusters, balanced=True, random_state=42)
+    labels_balanced = kmeans_balanced.fit_predict(X)
+    
+    # Count points in each cluster
+    unique, counts = np.unique(labels_balanced, return_counts=True)
+    cluster_counts = dict(zip(unique, counts))
+    print(f"Cluster distribution (balanced): {cluster_counts}")
+    
+    # Test online learning
+    print("\nTesting online learning...")
+    kmeans_online = KMeans(n_clusters=n_clusters, random_state=42)
+    
+    # Split data into batches
+    batch_size = 200
+    n_batches = n_samples // batch_size
+    
+    for i in range(n_batches):
+        start_idx = i * batch_size
+        end_idx = min((i + 1) * batch_size, n_samples)
+        batch = X[start_idx:end_idx]
+        
+        # Fit batch
+        if i == 0:
+            kmeans_online.fit(batch)
+        else:
+            kmeans_online.fit(batch, online=True, iter_k=i)
+    
+    # Predict on full dataset
+    labels_online = kmeans_online.predict(X)
+    
+    # Count points in each cluster
+    unique, counts = np.unique(labels_online, return_counts=True)
+    cluster_counts = dict(zip(unique, counts))
+    print(f"Cluster distribution (online): {cluster_counts}")
+    
+    print("\nKMeans testing complete!")
+    
+    return kmeans_standard, kmeans_balanced, kmeans_online
+
+if __name__ == "__main__":
+    # Run KMeans test if this file is executed directly
+    test_kmeans()
+
 
 
 
