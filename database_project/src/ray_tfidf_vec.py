@@ -508,7 +508,6 @@ def apply_models_batch(
 @ray.remote
 def process_stage2_group(
     group_df: pd.DataFrame,
-    cluster_a_id: int,
     cfg: object,
 ) -> Tuple[int, ray.ObjectRef]:
     """Samples, fits Stage 2 models for a group, returns cluster ID and model reference.
@@ -522,14 +521,13 @@ def process_stage2_group(
         Tuple of (cluster_a_id, models_ref) where models_ref is a Ray ObjectRef 
         pointing to a tuple of (vectorizer, kmeans) models
     """
+    if group_df.empty:
+        assert False
     n_clusters_b = cfg.cluster_layout[1]
     max_docs_sample = cfg.get("stage2_max_docs_sample", cfg.max_docs)
+
+    cluster_a_id = group_df[CLUSTER_A_COL].iloc[0]
     stage_label = f"Stage2_A={cluster_a_id}"
-
-    if group_df.empty:
-        print(f"Warning [{stage_label}]: Empty group received.")
-        return cluster_a_id, None
-
     sample_df = group_df.sample(n=min(len(group_df), max_docs_sample), random_state=42)
 
     # Use the generic fitting task
@@ -620,7 +618,7 @@ def run_clustering_pipeline(ds, cfg: object):
     print("Training Stage 2 models (one per Stage 1 cluster)...")
     
     # Create a named function instead of using partial directly
-    def process_stage2_group_with_cfg(group_df, cluster_a_id):
+    def process_stage2_group_with_cfg(group_df):
         return process_stage2_group(group_df, cluster_a_id, cfg=cfg)
     
     # process_stage2_group returns (cluster_a_id, models_ref)
