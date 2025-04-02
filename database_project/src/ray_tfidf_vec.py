@@ -619,6 +619,7 @@ def run_clustering_pipeline(ds, cfg: object):
         batch_format="pandas",
         batch_size=cfg.stage1_inf_batch_size,
         resources={"TPU-v4-8-head": 1},
+        num_cpus=210,
         concurrency=10,
     )
     
