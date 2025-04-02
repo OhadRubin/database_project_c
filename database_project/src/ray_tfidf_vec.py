@@ -499,7 +499,7 @@ class TFIDFInferenceModel:
         texts = batch["text"].tolist()
         embeddings = self.vectorizer.transform(texts)
         # 2. Predict Cluster
-        batch["embeddings"] = embeddings
+        batch["embeddings"] = list(embeddings)
         return batch
     
 class KMeansInferenceModel:
