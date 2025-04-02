@@ -661,8 +661,8 @@ def run_clustering_pipeline(ds, cfg: object):
     
 # from config_dict import config_dict
 from ml_collections import config_dict
-
-def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
+import glob
+def tfidf_minhash_ray(args):
 
     dummy_config = {
         "base_dir": "/tmp/ray_clustering_output",
@@ -682,10 +682,10 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
         "stage3_min_group_size": 50, # Min size for Stage 3 processing
         "tfidf_batch_size": 500, # Default batch size if others not set
         "stage3_dedup": True,
-        "similarity": threshold if threshold else 0.85,
-        "num_perm": num_perm if num_perm else 128,
-        "ngram_size": ngram_size if ngram_size else 5,
-        "min_ngram_size": min_ngram_size if min_ngram_size else 1,
+        "similarity": args.threshold if args.threshold else 0.85,
+        "num_perm": args.num_perm if args.num_perm else 128,
+        "ngram_size": args.ngram_size if args.ngram_size else 5,
+        "min_ngram_size": args.min_ngram_size if args.min_ngram_size else 1,
         "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
     }
     
@@ -696,12 +696,18 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
     
     # Prepare the input data
     # If column name is not 'text', rename it
-    if column and column != 'text':
-        df = df.withColumnRenamed(column, 'text')
-    
+    # if args.column and args.column != 'text':
+    #     df = df.withColumnRenamed(args.column, 'text')
+    if args.limit_files is not None:
+        input_file = glob.glob(input_file)[:args.limit_files]
     # Convert Spark DataFrame to Ray Dataset
     print(f"Converting Spark DataFrame to Ray Dataset...")
-    ray_df = ray.data.from_spark(df, parallelism=100)
+    # ray_df = ray.data.from_spark(df, parallelism=100)
+    
+    
+    ray_df = ray.data.read_json(input_file,override_num_blocks=1000)
+    
+    
     print(f"Ray Dataset created with {ray_df.count()} rows")
     
     # Run the clustering pipeline

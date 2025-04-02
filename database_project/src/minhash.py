@@ -364,7 +364,7 @@ def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngra
 # Create a reference to the tfidf_minhash function that we'll use later
 
 
-def minhash_lsh(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
+def _minhash_lsh(spark, df, column, num_perm, ngram_size, min_ngram_size, threshold):
     print(spark)
     B, R = optimal_param(threshold, num_perm)
     print(f"Using optimal parameters: {B=}, {R=}")
@@ -411,3 +411,106 @@ def minhash_lsh(spark, df, column, num_perm, ngram_size, min_ngram_size, thresho
     
     
     return deduplicated_df, duplicate_count
+
+import os
+
+
+def get_total_size_gb(files):
+    total_bytes = sum(os.path.getsize(f) for f in files)
+    return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
+import glob
+import sys
+def minhash_lsh(args):
+
+    if not args.mock:
+        if args.use_ray:
+            import ray
+            import raydp
+            ray.init(address='auto')
+            num_nodes = len([x for x in ray.nodes() if x["alive"]])
+            spark = raydp.init_spark(
+                    app_name="MinHashLSH",
+                    num_executors=num_nodes,
+                    executor_cores=235, # how many tasks the executor can run in parallel
+                    executor_memory="100g",
+                    configs = {
+                            'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                            'spark.debug.maxToStringFields': '100',
+
+                            'spark.driver.memory': '64g',
+                            "spark.driver.maxResultSize": "10g"
+                        })
+            
+        else:
+            conf = SparkConf()
+            conf.set("spark.app.name", "MinHashLSH")
+            conf.set("spark.debug.maxToStringFields", "100")
+            conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
+            conf.set("spark.driver.memory", "64g")
+            conf.set("spark.executor.memory", "64g")
+            conf.set("spark.driver.maxResultSize", "10g")
+            spark = SparkSession.builder.config(conf=conf).getOrCreate()
+            num_nodes=1
+            
+        log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
+        if not os.path.exists(args.output):
+            os.makedirs(args.output)
+            log.info(f"Created output directory: {args.output}")
+
+
+        # Load data from either BigQuery or local file
+        if args.table:
+            df = spark.read.format("bigquery").option("table", args.table).load()
+        else:
+            file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
+            
+            if file_extension == '.csv':
+                df = spark.read.option("header", "true").csv(args.input_file)
+                
+            elif file_extension.endswith('.json'):
+                input_file = args.input_file
+                if args.limit_files is not None:
+                    input_file = glob.glob(input_file)[:args.limit_files]
+                    print(f"Processing {len(input_file)} files")
+                    print(f"Total size: {get_total_size_gb(input_file):.2f} GB")
+                    
+                df = spark.read.json(input_file)
+            elif file_extension in ['.parquet', '.pq']:
+                df = spark.read.parquet(args.input_file)
+            else:
+                log.error(f"Unsupported file format: {file_extension}")
+                sys.exit(1)
+        
+        
+        import time
+
+        
+        # Track original record count
+        original_count = df.count()
+        
+        start_time = time.time()
+        df, duplicate_count = _minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+
+        dedup_count = original_count-duplicate_count
+        log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
+        dedup_time = time.time() - start_time
+        print(f"Deduplication took {dedup_time/60:.2f} minutes")
+        
+        start_time = time.time()
+        df.write.option("maxRecordsPerFile", 300_000).option(
+            "intermediateFormat", "orc"
+        ).parquet(args.output, mode="overwrite")
+        write_time = time.time() - start_time
+        
+        print(f"Writing output took {write_time/60:.2f} minutes")
+        
+        # Get final record count
+        record_count = df.count()
+        total_time = dedup_time + write_time
+    else:
+        duplicate_count=0
+        record_count=0
+        record_count=0
+        total_time=0
+    return record_count, total_time, num_nodes, duplicate_count
+    

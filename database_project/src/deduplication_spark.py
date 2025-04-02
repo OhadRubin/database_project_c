@@ -80,124 +80,20 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 
 
-tfidf_minhash = None  # This will be populated after adding the file to SparkContext
-minhash_lsh = None  # This will be populated after adding the file to SparkContext
-tfidf_minhash_ray = None  # This will be populated after adding the file to SparkContext
-minhash_lsh_ray = None  # This will be populated after adding the file to SparkContext
+
+
+from minhash import minhash_lsh
+from ray_tfidf_vec import tfidf_minhash_ray
 
 if __name__ == "__main__":
-
     args = create_parser()
-    if not args.mock:
-        if args.use_ray:
-            import ray
-            import raydp
-            ray.init(address='auto')
-            num_nodes = len([x for x in ray.nodes() if x["alive"]])
-            spark = raydp.init_spark(
-                    app_name="MinHashLSH",
-                    num_executors=num_nodes,
-                    executor_cores=235, # how many tasks the executor can run in parallel
-                    executor_memory="100g",
-                    configs = {
-                            'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
-                            'spark.debug.maxToStringFields': '100',
-                            # 'spark.ray.raydp_spark_master.actor.resource.CPU': 0,
-                            # 'spark.ray.raydp_spark_master.actor.resource.spark_master': 1,  # Force Spark driver related actor run on headnode
-                            'spark.driver.memory': '64g',
-                            "spark.driver.maxResultSize": "10g"
-                        })
-            
-        else:
-            conf = SparkConf()
-            conf.set("spark.app.name", "MinHashLSH")
-            conf.set("spark.debug.maxToStringFields", "100")
-            conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-            conf.set("spark.driver.memory", "64g")
-            conf.set("spark.executor.memory", "64g")
-            conf.set("spark.driver.maxResultSize", "10g")
-            spark = SparkSession.builder.config(conf=conf).getOrCreate()
-            num_nodes=1
-            
-        log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
-        if not os.path.exists(args.output):
-            os.makedirs(args.output)
-            log.info(f"Created output directory: {args.output}")
-
-
-        # Load data from either BigQuery or local file
-        if args.table:
-            df = spark.read.format("bigquery").option("table", args.table).load()
-        else:
-            file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
-            
-            if file_extension == '.csv':
-                df = spark.read.option("header", "true").csv(args.input_file)
-                
-            elif file_extension.endswith('.json'):
-                input_file = args.input_file
-                if args.limit_files is not None:
-                    input_file = glob.glob(input_file)[:args.limit_files]
-                    print(f"Processing {len(input_file)} files")
-                    print(f"Total size: {get_total_size_gb(input_file):.2f} GB")
-                    
-                df = spark.read.json(input_file)
-            elif file_extension in ['.parquet', '.pq']:
-                df = spark.read.parquet(args.input_file)
-            else:
-                log.error(f"Unsupported file format: {file_extension}")
-                sys.exit(1)
-        
-        
-        import time
-        # Get the current file's directory to make paths relative
-        # /home/ohadr/database_project_c/database_project/src/deduplication_spark.py
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-
-        spark.sparkContext.addPyFile(os.path.join(current_dir, "tfidf_vec.py"))
-        spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec.py"))
-        # spark.sparkContext.addPyFile(os.path.join(current_dir, "ray_tfidf_vec_test.py"))
-        spark.sparkContext.addPyFile(os.path.join(current_dir, "minhash.py"))
-        
-        # Now we can import the function directly
-        from tfidf_vec import tfidf_minhash
-        from minhash import minhash_lsh
-        from ray_tfidf_vec import tfidf_minhash_ray
-        
-        # Track original record count
-        original_count = df.count()
-        
-        start_time = time.time()
-        # assert args.implementation == "minhash_lsh"
-        if args.implementation == "minhash_lsh":
-            df, duplicate_count = minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-        elif args.implementation == "tfidf_minhash":
-            df, duplicate_count = tfidf_minhash(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-        elif args.implementation == "tfidf_minhash_ray":
-            df, duplicate_count = tfidf_minhash_ray(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-        else:
-            assert False, f"Implementation {args.implementation} not supported"
-        dedup_count = original_count-duplicate_count
-        log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
-        dedup_time = time.time() - start_time
-        print(f"Deduplication took {dedup_time/60:.2f} minutes")
-        
-        start_time = time.time()
-        df.write.option("maxRecordsPerFile", 300_000).option(
-            "intermediateFormat", "orc"
-        ).parquet(args.output, mode="overwrite")
-        write_time = time.time() - start_time
-        print(f"Writing output took {write_time/60:.2f} minutes")
-        
-        # Get final record count
-        record_count = df.count()
-        total_time = dedup_time + write_time
+    if args.implementation == "minhash_lsh":
+        record_count, total_time, num_nodes, duplicate_count = minhash_lsh(args)
+    elif args.implementation == "tfidf_minhash_ray":
+        record_count, total_time, num_nodes, duplicate_count = tfidf_minhash_ray(args)
     else:
-        duplicate_count=0
-        record_count=0
-        record_count=0
-        total_time=0
-    
+        assert False, f"Implementation {args.implementation} not supported"
+
     try:
         from src.db import init_db, get_session, BenchmarkRun
         
