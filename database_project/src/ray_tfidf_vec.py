@@ -573,9 +573,6 @@ def run_clustering_pipeline(ds, cfg: object):
     
 
     
-    # Wait for all directory creation tasks to complete
-    creation_results = ray.get(all_nodes_refs)
-    print(f"Directory creation status on all nodes: {all(creation_results)}")
     
     # Add detailed logging for resources
     print(f"Available Ray cluster resources before Stage 1 training:")
