@@ -592,7 +592,7 @@ def run_clustering_pipeline(ds, cfg: object):
     # Try with requested CPUs first
     models_s1_ref = fit_models_remote.options(
             num_cpus=cfg.stage1_train_cpus,
-            resources={"TPU": 4},
+            resources={"TPU-v4-8-head": 1},
     ).remote(
             cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
     )
@@ -616,7 +616,7 @@ def run_clustering_pipeline(ds, cfg: object):
         map_s1_func,
         batch_format="pandas",
         batch_size=cfg.stage1_inf_batch_size,
-        resources={"TPU": 4},
+        resources={"TPU-v4-8-head": 1},
     )
     
     # tagged_ds_A = tagged_ds_A.materialize()
@@ -628,7 +628,7 @@ def run_clustering_pipeline(ds, cfg: object):
         lambda group_df: process_stage2_group(group_df, cfg=cfg),
         num_cpus=cfg.stage2_train_cpus,
         batch_format="pandas",
-        resources={"TPU": 4},
+        resources={"TPU-v4-8-head": 1},
     )
 
     # Collect the model references (assume num stage 1 clusters is manageable)
@@ -687,7 +687,7 @@ def run_clustering_pipeline(ds, cfg: object):
         partial(apply_stage2_batch, models_dict_ref=stage2_models_dict_ref),
         batch_format="pandas",
         batch_size=cfg.stage2_inf_batch_size,
-        resources={"TPU": 4},
+        resources={"TPU-v4-8-head": 1},
     )
     
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()

@@ -86,14 +86,14 @@ gcsfuse \
 sleep 1
 
 
-
+# TPU-v4-8-head
 
 echo "Checking Ray cluster status..."
 if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
     echo "Ray cluster is not running. Starting Ray cluster..."
     # Start Ray in head mode
     if $IS_HEAD; then
-        $RAY_EXEC start --head --disable-usage-stats --resources='{"TPU": 4}'
+        $RAY_EXEC start --head --disable-usage-stats --resources='{"TPU-v4-8-head": 1}'
         echo "Ray cluster started in head mode"
     else
         $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block --resources='{"TPU": 4}'
