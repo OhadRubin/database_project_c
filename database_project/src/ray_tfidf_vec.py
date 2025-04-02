@@ -564,11 +564,12 @@ def run_clustering_pipeline(ds, cfg: object):
     
     
     # Sample for Stage 1 Training
-    sample_fraction = min(1.0, cfg.max_docs / ds.count()) if ds.count() > 0 else 0.0
-    print(f"Sampling {sample_fraction:.2%} ({cfg.max_docs} max) for Stage 1 training...")
+    # sample_fraction = min(1.0, cfg.max_docs / ds.count()) if ds.count() > 0 else 0.0
+    # print(f"Sampling {sample_fraction:.2%} ({cfg.max_docs} max) for Stage 1 training...")
     
     print("Stage 1 model fitting task submitted.")
-    sample_ds = ds.random_sample(fraction=sample_fraction)
+    # sample_ds = ds.random_sample(fraction=sample_fraction)
+    sample_ds = ds.limit(cfg.max_docs)
     # Collect sample - check memory constraints if max_docs is huge
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
@@ -607,7 +608,8 @@ def run_clustering_pipeline(ds, cfg: object):
     
     # Inference Stage 1
     print("Running Stage 1 inference...")
-    map_s1_func = partial(apply_models_batch,
+    def map_s1_func(batch: pd.DataFrame):
+        return apply_models_batch(batch,
                           vectorizer_ref=vectorizer_s1_ref,
                           kmeans_ref=kmeans_s1_ref,
                           cluster_col_name=CLUSTER_A_COL)
@@ -623,10 +625,12 @@ def run_clustering_pipeline(ds, cfg: object):
     # tagged_ds_A = tagged_ds_A.materialize()
     print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
+    def _process_stage2_group(group_df: pd.DataFrame):
+        return process_stage2_group(group_df, cfg=cfg)
     
 
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
-        lambda group_df: process_stage2_group(group_df, cfg=cfg),
+        _process_stage2_group,
         num_cpus=cfg.stage2_train_cpus,
         batch_format="pandas",
         resources={"TPU-v4-8-head": 1},
@@ -649,8 +653,8 @@ def run_clustering_pipeline(ds, cfg: object):
     # print("Stage 2 Model Dict Sample:", dict(list(stage2_models_dict.items())[:2])) # Debug
     
     print("Running Stage 2 inference...")
-    def apply_stage2_batch(batch: pd.DataFrame, models_dict_ref) -> pd.DataFrame:
-        models_dict = ray.get(models_dict_ref) # Get dict {cluster_id: models_ref}
+    def apply_stage2_batch(batch: pd.DataFrame) -> pd.DataFrame:
+        models_dict = ray.get(stage2_models_dict_ref) # Get dict {cluster_id: models_ref}
         batch[CLUSTER_B_COL] = -1 # Initialize column
         
         # Process each cluster_A group within the batch
@@ -685,10 +689,11 @@ def run_clustering_pipeline(ds, cfg: object):
         return batch
 
     tagged_ds_B = tagged_ds_A.map_batches(
-        partial(apply_stage2_batch, models_dict_ref=stage2_models_dict_ref),
+        apply_stage2_batch,
         batch_format="pandas",
         batch_size=cfg.stage2_inf_batch_size,
         resources={"TPU-v4-8-head": 1},
+        concurrency=10,
     )
     
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
