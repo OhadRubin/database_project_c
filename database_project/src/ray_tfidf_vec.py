@@ -150,6 +150,14 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
         #     batch = np.array(batch)
         print(jax.tree.map(lambda x: x.shape, batch),flush=True)
         # batch = jax.device_put(batch)
+        if isinstance(batch, np.ndarray):
+            print(f"{batch.shape=}",flush=True)
+        elif isinstance(batch, list):
+            print(f"{len(batch)=}",flush=True)
+            try:
+                print(f"{batch[0].shape=}",flush=True)
+            except:
+                print(f"{batch=}",flush=True)
             
         batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
