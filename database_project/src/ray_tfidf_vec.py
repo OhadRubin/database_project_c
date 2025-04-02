@@ -530,7 +530,7 @@ class KMeansInferenceModel:
         embeddings = batch["embeddings"]
         # 2. Predict Cluster
         batch[self.cluster_col_name] = self.tagging_func(embeddings)
-        batch.drop(columns=["embeddings"], inplace=True)
+        batch.pop("embeddings")
         return batch
 
 def apply_models_batch(
