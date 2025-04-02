@@ -526,7 +526,7 @@ class KMeansInferenceModel:
         self.cluster_col_name = cluster_col_name
 
     def __call__(self, batch: pd.DataFrame):
-        embeddings = batch["embeddings"]
+        embeddings = batch["embeddings"].to_numpy()
         # 2. Predict Cluster
         batch[self.cluster_col_name] = self.tagging_func(embeddings)
         batch.drop(columns=["embeddings"], inplace=True)
