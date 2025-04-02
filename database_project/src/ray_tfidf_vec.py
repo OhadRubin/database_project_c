@@ -8,17 +8,11 @@ from functools import partial
 import time
 import os
 from typing import List, Dict, Tuple, Any
-
 from sklearn.pipeline import Pipeline
-import torch
 from sklearn.cluster import KMeans
-
-
 import os
 import numpy as np
 import pandas as pd # Used for type hints, not core logic
-from pyspark import SparkConf
-from pyspark.sql import SparkSession, Row, DataFrame
 from pyspark.sql import functions as F
 import logging
 import math
@@ -32,14 +26,11 @@ from sklearn.preprocessing import Normalizer
 # Import Spark ML components
 
 import socket
-
 from sklearn.feature_extraction import text
 from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
 from tqdm import tqdm
 
-# Get the logger for TfidfVectorizer
 tfidf_logger = logging.getLogger('sklearn.feature_extraction.text')
-# Ignore warnings about stop words inconsistency
 import warnings
 warnings.filterwarnings('ignore', message="Your stop_words may be inconsistent with your preprocessing.*", category=UserWarning)
 
@@ -67,7 +58,6 @@ def get_sklearn_feature_pipeline(n_components, random_seed):
 
 
 
-    
 
 def fit_kmeans(iterable, n_clusters, batch_size, **kwargs):
     kmeans = KMeans(n_clusters=n_clusters, balanced=True, **kwargs)
@@ -81,7 +71,6 @@ def fit_kmeans(iterable, n_clusters, batch_size, **kwargs):
 # --- Constants ---
 CLUSTER_A_COL = 'cluster_A'
 CLUSTER_B_COL = 'cluster_B'
-CLUSTER_C_COL = 'cluster_C'
 TEMP_ID_COL = 'temp_doc_id'
 
 
@@ -106,8 +95,7 @@ def fit_models_remote(
     print(f"[{stage_label}] Fitting K-means with {n_clusters} clusters...")
     kmeans_batch_size_config = getattr(cfg, kmeans_train_batch_size_key)
         
-    # kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_batch_size_config) # Pass computed BS if needed
-    kmeans = None
+    kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_batch_size_config) # Pass computed BS if needed
     print(f"[{stage_label}] K-means fitting done.")
 
     return vectorizer, kmeans
@@ -132,8 +120,7 @@ def apply_models_batch(
     # 1. Vectorize (Transform)
     embeddings = vectorizer.transform(texts)
     # 2. Predict Cluster
-    # Convert embeddings if needed by predict (e.g., to tensor or dense numpy)
-    batch[cluster_col_name] = np.zeros(embeddings.shape[0])
+    batch[cluster_col_name] = kmeans.predict(embeddings)
 
 
     return batch
@@ -174,13 +161,7 @@ def process_stage2_group(
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
-    
-    
-    
-
-
-    # Optional: Limit size for testing/development
-    limit = cfg.get("ray_max_docs_limit")
+    limit = cfg.get("ray_max_docs_limit", None)
     if limit:
          ds = ds.limit(limit)
          print(f"Dataset limited to {limit} documents.")
@@ -202,38 +183,26 @@ def run_clustering_pipeline(ds, cfg: object):
 
     # Fit Stage 1 models remotely
     vectorizer_s1_ref, kmeans_s1_ref = fit_models_remote.options(
-            num_cpus=cfg.get("stage1_train_cpus", 4) # Configurable resources
-            # num_gpus=cfg.get("stage1_train_gpus", 0)
+            num_cpus=cfg.stage1_train_cpus
     ).remote(
             cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
     )
-
-
-    # Check if models were submitted successfully before proceeding
-    if vectorizer_s1_ref is None or kmeans_s1_ref is None:
-         print("Error: Stage 1 model fitting task failed to submit or returned None early. Aborting.")
-         # Wait for potential remote error messages if needed? Or just exit.
-         ray.shutdown()
-         return
-         
     # Inference Stage 1
     print("Running Stage 1 inference...")
     map_s1_func = partial(apply_models_batch,
                           vectorizer_ref=vectorizer_s1_ref,
                           kmeans_ref=kmeans_s1_ref,
-                          # kmeans_batch_size=cfg.stage1_inf_kmeans_bs, # Only if using JAX predictor
                           cluster_col_name=CLUSTER_A_COL)
 
     tagged_ds_A = ds.map_batches(
         map_s1_func,
         batch_format="pandas",
-        batch_size=cfg.get("stage1_inf_batch_size", cfg.tfidf_batch_size), # Configurable inference batch size
-        # concurrency=cfg.get("stage1_inf_concurrency") # Control parallelism
+        batch_size=cfg.stage1_inf_batch_size,
     )
     
     # tagged_ds_A = tagged_ds_A.materialize()
     print("Stage 1 inference complete. Schema:", tagged_ds_A.schema())
-    # print("Sample row after Stage 1:", tagged_ds_A.take(1)) # Debug
+    print("Sample row after Stage 1:", tagged_ds_A.take(1)) # Debug
     print("--- Stage 1 Done ---")
 
 
@@ -246,10 +215,10 @@ def run_clustering_pipeline(ds, cfg: object):
     # process_stage2_group returns (cluster_a_id, (vec_ref, kmeans_ref))
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
         stage2_group_processor_partial,
-        ray_remote_args={ # Resources for each group processing task
-             "num_cpus": cfg.get("stage2_train_cpus", 2),
+        ray_remote_args={
+             "num_cpus": cfg.stage2_train_cpus,
         },
-        batch_format="pandas" # Groups are passed as pandas DFs
+        batch_format="pandas"
     )
 
     # Collect the model references (assume num stage 1 clusters is manageable)
@@ -267,46 +236,34 @@ def run_clustering_pipeline(ds, cfg: object):
     # print("Stage 2 Model Dict Sample:", dict(list(stage2_models_dict.items())[:2])) # Debug
     
     print("Running Stage 2 inference...")
-    # Define the batch mapping function for Stage 2
     def apply_stage2_batch(batch: pd.DataFrame, models_dict_ref) -> pd.DataFrame:
         models_dict = ray.get(models_dict_ref) # Get dict {cluster_id: (vec_ref, kmeans_ref)}
         batch[CLUSTER_B_COL] = -1 # Initialize column
         
         # Process each cluster_A group within the batch
         for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
-            if cluster_a_id in models_dict:
-                vec_ref, kmeans_ref = models_dict[cluster_a_id]
-                if vec_ref is not None and kmeans_ref is not None:
-                    # Apply the specific models for this group
-                    processed_group = apply_models_batch(
-                        group.copy(), # Pass copy to avoid modifying original slice
-                        vectorizer_ref=vec_ref,
-                        kmeans_ref=kmeans_ref,
-                        # kmeans_batch_size=cfg.stage2_inf_kmeans_bs, # If needed
-                        cluster_col_name=CLUSTER_B_COL # Predict into the target col
-                    )
-                    # Assign results back using index
-                    batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
-                else:
-                     # Models failed training for this cluster_A
-                     batch.loc[group.index, CLUSTER_B_COL] = -1 # Mark as failed/skipped
-            else:
-                # Should not happen if map_groups covered all clusters present
-                print(f"Warning: cluster_A ID {cluster_a_id} not found in Stage 2 models dict.")
-                batch.loc[group.index, CLUSTER_B_COL] = -4 # Mark as missing model error
+            vec_ref, kmeans_ref = models_dict[cluster_a_id]
+            processed_group = apply_models_batch(
+                group.copy(), # Pass copy to avoid modifying original slice
+                vectorizer_ref=vec_ref,
+                kmeans_ref=kmeans_ref,
+                cluster_col_name=CLUSTER_B_COL # Predict into the target col
+            )
+            batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
+
         return batch
 
     tagged_ds_B = tagged_ds_A.map_batches(
         partial(apply_stage2_batch, models_dict_ref=stage2_models_dict_ref),
         batch_format="pandas",
-        batch_size=cfg.get("stage2_inf_batch_size", cfg.tfidf_batch_size)
-        # concurrency=cfg.get("stage2_inf_concurrency")
+        batch_size=cfg.stage2_inf_batch_size
     )
     
     final_ds = tagged_ds_B.materialize()
     print("Stage 2 inference complete. Schema:", final_ds.schema())
-    # print("Sample row after Stage 2:", tagged_ds_B.take(1)) # Debug
+    print("Sample row after Stage 2:", final_ds.take(1)) # Debug
     print("--- Stage 2 Done ---")
+
     print("--- Writing Final Output ---")
     # Define output path based on config
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
@@ -346,30 +303,43 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
         "stage2_train_kmeans_bs": 512,
         "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
         "stage2_inf_batch_size": 1000,
-        "stage2_train_cpus": 2, # Resources per Stage 2 group task
+        "stage2_train_cpus": 70, # Resources per Stage 2 group task
         "stage3_train_kmeans_bs": 256,
         "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
-        "stage3_proc_cpus": 2, # Resources per Stage 3 group task
+        "stage3_proc_cpus": 30, # Resources per Stage 3 group task
         "stage3_min_group_size": 50, # Min size for Stage 3 processing
         "tfidf_batch_size": 500, # Default batch size if others not set
         "stage3_dedup": True,
-        "similarity": 0.85,
-        "num_perm": 128,
-        "ngram_size": 5,
-        "train1_ds_kwargs_load": { # Example using a common dataset
-            "path": "ag_news",
-            "split": "train" 
-        },
+        "similarity": threshold if threshold else 0.85,
+        "num_perm": num_perm if num_perm else 128,
+        "ngram_size": ngram_size if ngram_size else 5,
+        "min_ngram_size": min_ngram_size if min_ngram_size else 1,
         "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
     }
+    
     cfg = config_dict.ConfigDict(dummy_config)
 
     # --- Run Pipeline ---
     start_time = time.time()
-    df = ray.data.from_spark(df, parallelism=100)
-    run_clustering_pipeline(df, cfg)
+    
+    # Prepare the input data
+    # If column name is not 'text', rename it
+    if column and column != 'text':
+        df = df.withColumnRenamed(column, 'text')
+    
+    # Convert Spark DataFrame to Ray Dataset
+    print(f"Converting Spark DataFrame to Ray Dataset...")
+    ray_df = ray.data.from_spark(df, parallelism=100)
+    print(f"Ray Dataset created with {ray_df.count()} rows")
+    
+    # Run the clustering pipeline
+    run_clustering_pipeline(ray_df, cfg)
+    
     end_time = time.time()
     print(f"Total pipeline execution time: {end_time - start_time:.2f} seconds")
+    
+    # Return the output path where results are stored
+    return f"{cfg.base_dir}/ray_output_final_clustered"
     
 
 
