@@ -620,22 +620,10 @@ def run_clustering_pipeline(ds, cfg: object):
     print("Finished collecting Stage 2 model references...")
     
     
-    for item in stage2_model_results:
-        print(item)
+    stage2_model_results = [deserialize_objectref_dict(item) for item in stage2_model_results]
         
-    # Check if stage2_model_results is a pandas DataFrame
-    if isinstance(stage2_model_results, pd.DataFrame):
-        print("Stage 2 model results as DataFrame:")
-        print(stage2_model_results)
-        print("DataFrame shape:", stage2_model_results.shape)
-        print("DataFrame columns:", stage2_model_results.columns)
-        print("DataFrame info:")
-        stage2_model_results.info()
-    
-    # Build dictionary mapping cluster_A ID to model refs
-    # Results look like: [{'cluster_A': 0, 'map_groups_output': models_ref}, ...]
     stage2_models_dict = {
-        item[CLUSTER_A_COL]: item['map_groups_output']
+        item['cluster_a_id']: item['models_ref']
         for item in stage2_model_results
     }
     stage2_models_dict_ref = ray.put(stage2_models_dict) # Put the whole dict in object store
