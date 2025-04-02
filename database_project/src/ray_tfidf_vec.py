@@ -699,7 +699,7 @@ def tfidf_minhash_ray(args):
     # if args.column and args.column != 'text':
     #     df = df.withColumnRenamed(args.column, 'text')
     if args.limit_files is not None:
-        input_file = glob.glob(input_file)[:args.limit_files]
+        input_file = glob.glob(args.input_file)[:args.limit_files]
     # Convert Spark DataFrame to Ray Dataset
     print(f"Converting Spark DataFrame to Ray Dataset...")
     # ray_df = ray.data.from_spark(df, parallelism=100)
