@@ -415,7 +415,7 @@ def get_sklearn_feature_pipeline(n_components, random_seed):
 
 
 
-
+import ray.cloudpickle as cloudpickle
 from torch.utils.data import DataLoader
 
 def fit_kmeans(embeddings, n_clusters, batch_size, **kwargs):
@@ -531,7 +531,16 @@ def process_stage2_group(
     
     print(f"[{stage_label}] Model fitting tasks submitted.")
     # We return the cluster_id and the reference to the models
-    return [ {"cluster_a_id":cluster_a_id, "models_ref":models_ref}]
+    models_ref_ser = cloudpickle.dumps(models_ref)
+    result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref_ser}
+    result = serialize_objectref_dict(result)
+    return pd.DataFrame([result])
+def serialize_objectref_dict(objectref_dict):
+    return {k: np.array(cloudpickle.dumps(v)) for k, v in objectref_dict.items()}
+
+def deserialize_objectref_dict(objectref_dict):
+    return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
+
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
