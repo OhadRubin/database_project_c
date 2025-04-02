@@ -683,7 +683,8 @@ def run_clustering_pipeline(ds, cfg: object):
     tagged_ds_B = tagged_ds_A.map_batches(
         partial(apply_stage2_batch, models_dict_ref=stage2_models_dict_ref),
         batch_format="pandas",
-        batch_size=cfg.stage2_inf_batch_size
+        batch_size=cfg.stage2_inf_batch_size,
+        ray_remote_args={"resources":{"TPU": 4}}
     )
     
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
@@ -721,7 +722,7 @@ def tfidf_minhash_ray(args):
 
     dummy_config = {
         "base_dir": "/mnt/gcs_bucket/ray_clustering_output",
-        "cluster_layout": [5, 3, 2], # Smaller example layout
+        "cluster_layout": [10, 10, 2], # Smaller example layout
         "max_docs": 5000, # Sample size for training
         "stage1_train_kmeans_bs": 1024,
         "stage1_inf_kmeans_bs": 4096, # Needed if using JAX prediction

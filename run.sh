@@ -93,10 +93,10 @@ if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
     echo "Ray cluster is not running. Starting Ray cluster..."
     # Start Ray in head mode
     if $IS_HEAD; then
-        $RAY_EXEC start --head --disable-usage-stats
+        $RAY_EXEC start --head --disable-usage-stats --resources='{"TPU": 4}'
         echo "Ray cluster started in head mode"
     else
-        $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block
+        $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block --resources='{"TPU": 4}'
         echo "Ray cluster joined as worker node"
     fi
 else
