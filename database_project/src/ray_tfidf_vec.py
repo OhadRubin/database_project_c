@@ -737,7 +737,7 @@ def tfidf_minhash_ray(args):
         "num_perm": args.num_perm if args.num_perm else 128,
         "ngram_size": args.ngram_size if args.ngram_size else 5,
         "min_ngram_size": args.min_ngram_size if args.min_ngram_size else 1,
-        "ray_max_docs_limit": 10000 # Limit total docs processed (for testing)
+        "ray_max_docs_limit": None # Limit total docs processed (for testing)
     }
     
     cfg = config_dict.ConfigDict(dummy_config)
