@@ -119,7 +119,7 @@ class NumberNormalizingVectorizer(TfidfVectorizer):
 import torch
 
 
-
+from flax.jax_utils import pad_shard_unpad    
 
 def _nearest_cluster(data, clusters):
     data = jnp.expand_dims(data, axis=1)
@@ -484,6 +484,9 @@ def apply_models_batch(
         return batch
     vectorizer = ray.get(vectorizer_ref) # Retrieve models from Object Store (Ray caches locally after first get)
     kmeans = ray.get(kmeans_ref)
+    
+    
+    tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=2048)
 
     # if vectorizer is None or kmeans is None:
     #     assert False
@@ -492,7 +495,7 @@ def apply_models_batch(
     # 1. Vectorize (Transform)
     embeddings = vectorizer.transform(texts)
     # 2. Predict Cluster
-    batch[cluster_col_name] = kmeans.predict(embeddings)
+    batch[cluster_col_name] = tagging_func(embeddings)
 
 
     return batch
