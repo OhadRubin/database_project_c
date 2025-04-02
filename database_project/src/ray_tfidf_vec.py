@@ -140,7 +140,10 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
     nearest_cluster_padded = pad_shard_unpad(nearest_cluster_bound,
                                              static_return=False,static_argnums=())
     def nearest_cluster(batch):
-        batch_preds = nearest_cluster_padded(batch.numpy(),
+        if isinstance(batch, torch.Tensor):
+            batch = batch.numpy()
+            
+        batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
         batch_preds = jax.device_get(batch_preds).reshape(-1).tolist()
         return batch_preds
