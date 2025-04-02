@@ -591,7 +591,8 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Attempting to allocate {cfg.stage1_train_cpus} CPUs for Stage 1 training task...")
     # Try with requested CPUs first
     models_s1_ref = fit_models_remote.options(
-            num_cpus=cfg.stage1_train_cpus
+            num_cpus=cfg.stage1_train_cpus,
+            ray_remote_args={"resources":{"TPU": 4}},
     ).remote(
             cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
     )
@@ -615,6 +616,7 @@ def run_clustering_pipeline(ds, cfg: object):
         map_s1_func,
         batch_format="pandas",
         batch_size=cfg.stage1_inf_batch_size,
+        ray_remote_args={"resources":{"TPU": 4}},
     )
     
     # tagged_ds_A = tagged_ds_A.materialize()
@@ -625,7 +627,8 @@ def run_clustering_pipeline(ds, cfg: object):
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
         lambda group_df: process_stage2_group(group_df, cfg=cfg),
         num_cpus=cfg.stage2_train_cpus,
-        batch_format="pandas"
+        batch_format="pandas",
+        ray_remote_args={"resources":{"TPU": 4}},
     )
 
     # Collect the model references (assume num stage 1 clusters is manageable)
