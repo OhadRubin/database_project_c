@@ -480,13 +480,59 @@ def run_clustering_pipeline(ds, cfg: object):
         print(f"  - {resource}: {amount}")
     print(f"Requesting {cfg.stage1_train_cpus} CPUs for Stage 1 training task")
     print(f"Ray cluster status: {ray.cluster_resources()}")
+    
+    # Try to clear caches and force release resources
+    print("Clearing Ray object store and releasing resources...")
+    ray.runtime_context.get_runtime_context().free_plasma_memory()
+    time.sleep(2)  # Give Ray time to release resources
+    print(f"Available resources after cache clearing: {ray.available_resources()}")
 
     # Fit Stage 1 models remotely
-    models_s1_ref = fit_models_remote.options(
-            num_cpus=cfg.stage1_train_cpus
-    ).remote(
-            cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
-    )
+    print(f"Attempting to allocate {cfg.stage1_train_cpus} CPUs for Stage 1 training task...")
+    try:
+        # Try with requested CPUs first
+        models_s1_ref = fit_models_remote.options(
+                num_cpus=cfg.stage1_train_cpus
+        ).remote(
+                cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
+        )
+        
+        # Start a monitoring loop to check task status
+        print("Monitoring task status...")
+        start_monitor = time.time()
+        while time.time() - start_monitor < 30:  # Wait up to 30 seconds
+            try:
+                # Try to get task status without blocking
+                ready_refs, _ = ray.wait([models_s1_ref], timeout=1)
+                if ready_refs:
+                    print("Task started successfully!")
+                    break
+            except Exception as e:
+                print(f"Error monitoring task: {e}")
+            
+            print(f"Task not started yet, available resources: {ray.available_resources().get('CPU', 0)} CPUs")
+            time.sleep(2)
+        else:
+            # If we reached here, task didn't start in time
+            print("Task didn't start in allocated time. Trying with fewer CPUs...")
+            # Cancel the original task
+            ray.cancel(models_s1_ref)
+            # Try with fewer CPUs
+            reduced_cpus = max(4, cfg.stage1_train_cpus // 2)
+            print(f"Retrying with {reduced_cpus} CPUs instead...")
+            models_s1_ref = fit_models_remote.options(
+                    num_cpus=reduced_cpus
+            ).remote(
+                    cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
+            )
+    except Exception as e:
+        print(f"Error allocating resources: {e}")
+        print("Falling back to minimal resource allocation...")
+        models_s1_ref = fit_models_remote.options(
+                num_cpus=4  # Minimum viable CPUs
+        ).remote(
+                cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
+        )
     
     # Get the actual models from the reference
     vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
