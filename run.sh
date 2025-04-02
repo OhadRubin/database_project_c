@@ -79,6 +79,9 @@ else
     echo "Ray cluster is already running"
 fi
 
+sudo mkdir -p /dev/shm/gcs_cache
+sudo chmod 777 /dev/shm/gcs_cache
+
 sudo chown -R $USER:$USER /dev/shm/gcs_cache
 sudo umount -l /mnt/gcs_bucket
 sleep 1
