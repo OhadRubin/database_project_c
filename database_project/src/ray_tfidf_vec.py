@@ -510,17 +510,6 @@ def process_stage2_group(
     group_df: pd.DataFrame,
     cfg: object,
 ) -> Tuple[int, ray.ObjectRef]:
-    """Samples, fits Stage 2 models for a group, returns cluster ID and model reference.
-    
-    Args:
-        group_df: DataFrame containing data for this cluster group
-        cluster_a_id: The cluster ID from stage 1
-        cfg: Configuration object
-        
-    Returns:
-        Tuple of (cluster_a_id, models_ref) where models_ref is a Ray ObjectRef 
-        pointing to a tuple of (vectorizer, kmeans) models
-    """
     if group_df.empty:
         assert False
     n_clusters_b = cfg.cluster_layout[1]
@@ -542,7 +531,7 @@ def process_stage2_group(
     
     print(f"[{stage_label}] Model fitting tasks submitted.")
     # We return the cluster_id and the reference to the models
-    return cluster_a_id, models_ref
+    return [(cluster_a_id, models_ref)]
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
