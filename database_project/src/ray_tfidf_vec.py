@@ -622,6 +622,15 @@ def run_clustering_pipeline(ds, cfg: object):
     
     for item in stage2_model_results:
         print(item)
+        
+    # Check if stage2_model_results is a pandas DataFrame
+    if isinstance(stage2_model_results, pd.DataFrame):
+        print("Stage 2 model results as DataFrame:")
+        print(stage2_model_results)
+        print("DataFrame shape:", stage2_model_results.shape)
+        print("DataFrame columns:", stage2_model_results.columns)
+        print("DataFrame info:")
+        stage2_model_results.info()
     
     # Build dictionary mapping cluster_A ID to model refs
     # Results look like: [{'cluster_A': 0, 'map_groups_output': models_ref}, ...]
