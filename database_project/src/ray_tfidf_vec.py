@@ -12,7 +12,7 @@ import time
 import os
 from typing import List, Dict, Tuple, Any
 from sklearn.pipeline import Pipeline
-from sklearn.cluster import KMeans as SklearnKMeans
+from sklearn.cluster import KMeans as SklearnKMeans, k_means
 import os
 import numpy as np
 import pandas as pd # Used for type hints, not core logic
@@ -480,6 +480,26 @@ def fit_models_remote(
 
     return vectorizer, kmeans
 
+
+class InferenceModel:
+    def __init__(self,
+        vectorizer_ref: ray.ObjectRef,
+        kmeans_ref: ray.ObjectRef,
+        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
+        cluster_col_name: str
+        ):
+        self.vectorizer = ray.get(vectorizer_ref)
+        self.kmeans = ray.get(kmeans_ref)
+        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
+        self.cluster_col_name = cluster_col_name
+
+    def __call__(self, batch: pd.DataFrame):
+        texts = batch["text"].tolist()
+        embeddings = self.vectorizer.transform(texts)
+        # 2. Predict Cluster
+        batch[self.cluster_col_name] = self.tagging_func(embeddings)
+        return batch
+
 def apply_models_batch(
     batch: pd.DataFrame,
     vectorizer_ref: ray.ObjectRef,
@@ -608,20 +628,32 @@ def run_clustering_pipeline(ds, cfg: object):
     
     # Inference Stage 1
     print("Running Stage 1 inference...")
-    def map_s1_func(batch: pd.DataFrame):
-        return apply_models_batch(batch,
-                          vectorizer_ref=vectorizer_s1_ref,
-                          kmeans_ref=kmeans_s1_ref,
-                          cluster_col_name=CLUSTER_A_COL)
+    if False:
+        def map_s1_func(batch: pd.DataFrame):
+            return apply_models_batch(batch,
+                            vectorizer_ref=vectorizer_s1_ref,
+                            kmeans_ref=kmeans_s1_ref,
+                            cluster_col_name=CLUSTER_A_COL)
 
-    tagged_ds_A = ds.map_batches(
-        map_s1_func,
-        batch_format="pandas",
-        batch_size=cfg.stage1_inf_batch_size,
-        # resources={"TPU-v4-8-head": 1},
-        num_cpus=210,
-        concurrency=10,
-    )
+        tagged_ds_A = ds.map_batches(
+            map_s1_func,
+            batch_format="pandas",
+            batch_size=cfg.stage1_inf_batch_size,
+            # resources={"TPU-v4-8-head": 1},
+            num_cpus=210,
+            concurrency=10,
+        )
+    else:
+        tagged_ds_A = ds.map_batches(
+            InferenceModel,
+            batch_format="pandas",
+            batch_size=cfg.stage1_inf_batch_size,
+            resources={"TPU-v4-8-head": 1},
+            num_cpus=210,
+            concurrency=10,
+            fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref, "kmeans_ref": kmeans_s1_ref, "cluster_col_name": CLUSTER_A_COL},
+        )
+        
     
     # tagged_ds_A = tagged_ds_A.materialize()
     print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
