@@ -158,7 +158,7 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
                 print(f"{batch[0].shape=}",flush=True)
             except:
                 print(f"{batch=}",flush=True)
-        batch = np.array(batch).reshape(2048,128)
+        batch = np.stack(batch,axis=0).reshape(2048,128)
             
         batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
