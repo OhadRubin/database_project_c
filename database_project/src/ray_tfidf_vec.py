@@ -142,6 +142,8 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
     def nearest_cluster(batch):
         if isinstance(batch, torch.Tensor):
             batch = batch.numpy()
+        else:
+            batch = np.array(batch)
             
         batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
