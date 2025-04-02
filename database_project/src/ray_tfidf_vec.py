@@ -472,6 +472,14 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
     print(f"Sample size: {len(sample_df)}")
+    
+    # Add detailed logging for resources
+    print(f"Available Ray cluster resources before Stage 1 training:")
+    resources_available = ray.available_resources()
+    for resource, amount in resources_available.items():
+        print(f"  - {resource}: {amount}")
+    print(f"Requesting {cfg.stage1_train_cpus} CPUs for Stage 1 training task")
+    print(f"Ray cluster status: {ray.cluster_resources()}")
 
     # Fit Stage 1 models remotely
     models_s1_ref = fit_models_remote.options(
@@ -617,14 +625,14 @@ def tfidf_minhash_ray(spark, df, column, num_perm, ngram_size, min_ngram_size, t
         "stage1_train_kmeans_bs": 1024,
         "stage1_inf_kmeans_bs": 4096, # Needed if using JAX prediction
         "stage1_inf_batch_size": 1000, # Ray batch size for inference
-        "stage1_train_cpus": 70, # Resources for Stage 1 training task
+        "stage1_train_cpus": 16, # Reduced from 70 to fit cluster capacity
         "stage2_train_kmeans_bs": 512,
         "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
         "stage2_inf_batch_size": 1000,
-        "stage2_train_cpus": 70, # Resources per Stage 2 group task
+        "stage2_train_cpus": 16, # Reduced from 70 to fit cluster capacity
         "stage3_train_kmeans_bs": 256,
         "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
-        "stage3_proc_cpus": 30, # Resources per Stage 3 group task
+        "stage3_proc_cpus": 8, # Reduced from 30 to fit cluster capacity
         "stage3_min_group_size": 50, # Min size for Stage 3 processing
         "tfidf_batch_size": 500, # Default batch size if others not set
         "stage3_dedup": True,
