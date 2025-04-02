@@ -552,6 +552,23 @@ def run_clustering_pipeline(ds, cfg: object):
     print("--- Stage 1 Starting ---")
     n_clusters_a = cfg.cluster_layout[0]
     
+    
+    output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
+    
+    
+    # Use Ray to ensure directories exist on all workers
+    @ray.remote
+    def ensure_dir_exists(path):
+        os.makedirs(path, exist_ok=True)
+        return os.path.exists(path)
+    
+    # Create directories on all nodes in the Ray cluster
+    all_nodes_refs = []
+    for node_id in ray.nodes():
+        ref = ensure_dir_exists.options(resources={f"node:{node_id['NodeID']}": 0.001}).remote(output_base_path)
+        all_nodes_refs.append(ref)
+    
+    
     # Sample for Stage 1 Training
     sample_fraction = min(1.0, cfg.max_docs / ds.count()) if ds.count() > 0 else 0.0
     print(f"Sampling {sample_fraction:.2%} ({cfg.max_docs} max) for Stage 1 training...")
@@ -562,6 +579,14 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
     print(f"Sample size: {len(sample_df)}")
+    
+    
+    
+
+    
+    # Wait for all directory creation tasks to complete
+    creation_results = ray.get(all_nodes_refs)
+    print(f"Directory creation status on all nodes: {all(creation_results)}")
     
     # Add detailed logging for resources
     print(f"Available Ray cluster resources before Stage 1 training:")
@@ -679,24 +704,7 @@ def run_clustering_pipeline(ds, cfg: object):
 
     print("--- Writing Final Output ---")
     # Define output path based on config
-    output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
-    print(f"Writing final partitioned data to: {output_base_path}")
-    
-    # Use Ray to ensure directories exist on all workers
-    @ray.remote
-    def ensure_dir_exists(path):
-        os.makedirs(path, exist_ok=True)
-        return os.path.exists(path)
-    
-    # Create directories on all nodes in the Ray cluster
-    all_nodes_refs = []
-    for node_id in ray.nodes():
-        ref = ensure_dir_exists.options(resources={f"node:{node_id['NodeID']}": 0.001}).remote(output_base_path)
-        all_nodes_refs.append(ref)
-    
-    # Wait for all directory creation tasks to complete
-    creation_results = ray.get(all_nodes_refs)
-    print(f"Directory creation status on all nodes: {all(creation_results)}")
+
     
     # Create directory on the driver node as well
     os.makedirs(output_base_path, exist_ok=True)
