@@ -710,7 +710,7 @@ def run_clustering_pipeline(ds, cfg: object):
         # Ray automatically handles partitioning based on directory structure
         # partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL, CLUSTER_C_COL] # Specify if needed explicitly
         partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL], # Specify if needed explicitly
-        min_rows_per_file=10000,
+        # min_rows_per_file=10000,
     )
     print("--- Pipeline Finished ---")
 
