@@ -536,7 +536,7 @@ def process_stage2_group(
     result = serialize_objectref_dict(result)
     return pd.DataFrame([result])
 def serialize_objectref_dict(objectref_dict):
-    return {k: np.array(cloudpickle.dumps(v)) for k, v in objectref_dict.items()}
+    return {k: cloudpickle.dumps(v) for k, v in objectref_dict.items()}
 
 def deserialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
