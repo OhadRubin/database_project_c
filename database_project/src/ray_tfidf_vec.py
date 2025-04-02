@@ -116,206 +116,288 @@ class NumberNormalizingVectorizer(TfidfVectorizer):
         return lambda doc: list(number_normalizer(tokenize(doc)))
     
 
+import torch
 
-class KMeans:
-    """K-Means implementation with support for online learning and balanced clusters.
+
+
+
+def _nearest_cluster(data, clusters):
+    data = jnp.expand_dims(data, axis=1)
+    clusters = jnp.expand_dims(clusters, axis=0)
+    dis = (data - clusters) ** 2.0
+    dis = jnp.sum(dis, axis=-1)
+    dis = jnp.squeeze(dis)
+    return dis.argmin(axis=1)
+
+def compile_nearest_cluster(kmeans, kmeans_batch_size):
+    n_local_devices = jax.local_device_count()
+    codebook = np.array(kmeans.cluster_centers)
+    codebook = jax.device_put(codebook)
     
-    This implementation extends sklearn.cluster.KMeans with additional features:
+    def nearest_cluster_bound(element):
+        return jax.pmap(_nearest_cluster,in_axes=(0, None))(element, codebook)
     
-    1. Online learning - Update cluster centers with new batches of data without retraining
-    2. Balanced clustering - Ensure clusters have approximately equal number of points
-    3. JAX acceleration - Use JAX for faster distance computations when available
+    nearest_cluster_padded = pad_shard_unpad(nearest_cluster_bound,
+                                             static_return=False,static_argnums=())
+    def nearest_cluster(batch):
+        batch_preds = nearest_cluster_padded(batch.numpy(),
+                                                        min_device_batch=kmeans_batch_size//n_local_devices)
+        batch_preds = jax.device_get(batch_preds).reshape(-1).tolist()
+        return batch_preds
     
-    The standard scikit-learn KMeans implementation doesn't support these features, 
-    particularly online learning which is important for large datasets that can't
-    fit in memory at once.
+    return nearest_cluster
+
+
+
+def _jax_pairwise_distance(data1, data2):
+    # Expand the data matrices to have an extra dimension.
+    A = jnp.expand_dims(data1, axis=1)
+    B = jnp.expand_dims(data2, axis=0)
+
+    # Compute the squared pairwise distances.
+    dis = (A - B) ** 2.0
+
+    # Sum the squared pairwise distances over the feature dimension.
+    dis = jnp.sum(dis, axis=-1)
+
+    # Squeeze the output to have shape (N, M)[].
+    dis = jnp.squeeze(dis)
+
+    return dis
+
+import torch
+
+def reshape_for_jax(data1, data2):
+    batch_size = data1.shape[0]
+    n_clusters = data2.shape[0]
+    data1 = data1.reshape([jax.local_device_count(),
+                           batch_size//jax.local_device_count(),-1])
+    return data1, data2, batch_size, n_clusters
+
+
+def torch_pairwise_distance(data1, data2):
+    A = torch.unsqueeze(data1, dim=1)
+    B = torch.unsqueeze(data2, dim=0)
+    dis = (A - B) ** 2.0
+    dis = torch.sum(dis, dim=-1)
+    dis = torch.squeeze(dis)
+    return torch.argmin(dis, dim=1)
+
+
+def jax_pairwise_distance(data1, data2):
+    dist_func = jax.pmap(_jax_pairwise_distance,in_axes=(0, None))
     
-    This implementation is designed to work with Ray's distributed processing pipeline
-    for clustering documents using TF-IDF vectorization.
-    
-    Usage Examples:
-    
-    # Standard clustering
-    kmeans = KMeans(n_clusters=5, random_state=42)
-    labels = kmeans.fit_predict(X)
-    
-    # Balanced clustering
-    kmeans = KMeans(n_clusters=5, balanced=True, random_state=42)
-    labels = kmeans.fit_predict(X)
-    
-    # Online learning with batches
-    kmeans = KMeans(n_clusters=5, random_state=42)
-    for i, batch in enumerate(batches):
-        if i == 0:
-            kmeans.fit(batch)  # Initial fit
-        else:
-            kmeans.fit(batch, online=True, iter_k=i)  # Update with new batch
-    
-    # Prediction with new data
-    labels = kmeans.predict(X_new)
-    
-    Args:
-        n_clusters: Number of clusters
-        balanced: If True, try to create equal-sized clusters
-        random_state: Random seed for reproducibility
-        use_jax: Whether to use JAX for distance calculations (faster, if available)
-        **kwargs: Additional arguments passed to sklearn.cluster.KMeans
+    data1, data2, *shape = reshape_for_jax(data1, data2)
+    dis = dist_func(data1, data2)
+    dis = jax.device_get(dis).reshape(shape)
+    return dis
+
+
+def np_pairwise_distance(data1, data2):
+    A = np.expand_dims(data1, axis=1)
+    B = np.expand_dims(data2, axis=0)
+    dis = (A - B) ** 2.0
+    dis = np.sum(dis, axis=-1)
+    dis = np.squeeze(dis)
+    return dis.argmin(axis=1)
+
+def auction_lap(job_and_worker_to_score, return_token_to_worker=True):
     """
-    def __init__(self, n_clusters=8, balanced=False, random_state=None, use_jax=True, **kwargs):
-        self.n_clusters = n_clusters
-        self.balanced = balanced
-        self.random_state = random_state
-        self.use_jax = use_jax
-        self.kmeans_kwargs = kwargs
-        self.cluster_centers_ = None
-        self.inertia_ = None
-        self._is_fitted = False
-        
-        # Initialize the sklearn KMeans model
-        self._sklearn_kmeans = SklearnKMeans(
-            n_clusters=n_clusters,
-            random_state=random_state,
-            **kwargs
-        )
-    
-    def fit(self, X, iter_limit=None, online=False, iter_k=None, **kwargs):
-        """Fit the K-means model to the data.
-        
-        Args:
-            X: Training data
-            iter_limit: Maximum number of iterations (for compatibility)
-            online: If True, update existing centroids instead of recomputing
-            iter_k: Batch number for online learning
-            **kwargs: Additional arguments for sklearn KMeans
-        
-        Returns:
-            Cluster assignments for the training data
-        """
-        X = np.asarray(X)
-        
-        # For the first batch or if not online, initialize centroids
-        if not online or (online and iter_k == 0) or not self._is_fitted:
-            self._sklearn_kmeans = SklearnKMeans(
-                n_clusters=self.n_clusters,
-                random_state=self.random_state,
-                **self.kmeans_kwargs
-            )
-            self._sklearn_kmeans.fit(X)
-            self.cluster_centers_ = self._sklearn_kmeans.cluster_centers_
-            self.inertia_ = self._sklearn_kmeans.inertia_
-            self._is_fitted = True
-            return self._get_labels(X)
-        
-        # For subsequent batches in online learning, compute distances using jax if available
-        if self.use_jax:
-            distances = jax_pairwise_distance(X, self.cluster_centers_)
-            labels = np.argmin(distances, axis=1)
-        else:
-            labels = self._sklearn_kmeans.predict(X)
-        
-        # Update centroids based on new data
-        for i in range(self.n_clusters):
-            # Get points assigned to this cluster
-            cluster_points = X[labels == i]
-            if len(cluster_points) > 0:
-                # Update centroid as weighted average of old and new centroids
-                old_centroid = self.cluster_centers_[i]
-                new_centroid = np.mean(cluster_points, axis=0)
-                # Simple moving average: as iterations progress, give more weight to history
-                weight = min(0.9, 1.0 / (iter_k + 1)) if iter_k is not None else 0.1
-                updated_centroid = (1 - weight) * old_centroid + weight * new_centroid
-                self.cluster_centers_[i] = updated_centroid
-        
-        # Update the sklearn model with the new centroids
-        self._sklearn_kmeans.cluster_centers_ = self.cluster_centers_
-        
-        return self._get_labels(X)
-    
-    def _get_labels(self, X):
-        """Get cluster assignments for X."""
-        X = np.asarray(X)
-        
-        # Compute distances using JAX for better performance when available and enabled
-        if self.use_jax:
-            distances = jax_pairwise_distance(X, self.cluster_centers_)
-        else:
-            distances = self._sklearn_kmeans.transform(X)
-            
-        if self.balanced:
-            # Implement balanced clustering (assign equal points to each cluster)
-            # This is a simple greedy implementation - could be improved
-            n_samples = X.shape[0]
-            target_size = n_samples // self.n_clusters
-            
-            # Start with normal assignments
-            labels = np.argmin(distances, axis=1)
-            
-            # Count points per cluster
-            counts = np.bincount(labels, minlength=self.n_clusters)
-            
-            # Iteratively balance clusters
-            for _ in range(3):  # Limit iterations for performance
-                for i in range(self.n_clusters):
-                    if counts[i] <= target_size:
-                        continue
-                    
-                    # Find points that could be reassigned from this cluster
-                    cluster_points = np.where(labels == i)[0]
-                    
-                    # Sort by how well they fit alternative clusters
-                    point_distances = distances[cluster_points]
-                    point_distances[:, i] = np.inf  # Exclude current cluster
-                    alternative_clusters = np.argmin(point_distances, axis=1)
-                    
-                    # Sort points by how close they are to alternative
-                    alt_distances = np.min(point_distances, axis=1)
-                    sorted_indices = np.argsort(alt_distances)
-                    
-                    # Move points to alternative clusters until balance is achieved
-                    for idx in sorted_indices:
-                        if counts[i] <= target_size:
-                            break
-                        
-                        point_idx = cluster_points[idx]
-                        new_cluster = alternative_clusters[idx]
-                        
-                        # Only move if target cluster isn't already too full
-                        if counts[new_cluster] < target_size:
-                            labels[point_idx] = new_cluster
-                            counts[i] -= 1
-                            counts[new_cluster] += 1
-            
-            return labels
-        else:
-            # Use standard k-means assignments
-            return np.argmin(distances, axis=1)
-    
-    def predict(self, X):
-        """Predict the closest cluster for each sample in X."""
-        if not self._is_fitted:
-            raise RuntimeError("Model not fitted yet")
-        
-        X = np.asarray(X)
-        return self._get_labels(X)
+    Solving the balanced linear assignment problem with auction algorithm.
+    Arguments:
+        - job_and_worker_to_score -> N x M euclidean distances between N data points and M cluster centers
+    Returns:
+        - assignment -> balanced assignment between jobs and workers
+    """
+    eps = (job_and_worker_to_score.max() - job_and_worker_to_score.min()) / 50
+    eps.clamp_min_(1e-04)
+    assert not torch.isnan(job_and_worker_to_score).any()
+    if torch.isnan(job_and_worker_to_score).any():
+        raise Exception("NaN distance")
+    worker_and_job_to_score = job_and_worker_to_score.detach().transpose(0,1).contiguous()
+    num_workers, num_jobs = worker_and_job_to_score.size()
+    jobs_per_worker = num_jobs // num_workers
+    value = torch.clone(worker_and_job_to_score)
+    bids = torch.zeros((num_workers, num_jobs),
+                        dtype=worker_and_job_to_score.dtype,
+                        device=worker_and_job_to_score.device,
+                        requires_grad=False)
+    counter = 0
+    index = None
+    cost = torch.zeros((1,num_jobs,),
+                        dtype=worker_and_job_to_score.dtype,
+                        device=worker_and_job_to_score.device,
+                        requires_grad=False)
+    while True:
+        top_values, top_index = value.topk(jobs_per_worker + 1, dim=1)
+        # Each worker bids the difference in value between that job and the k+1th job
+        bid_increments = top_values[:,:-1] - top_values[:,-1:]  + eps
+        assert bid_increments.size() == (num_workers, jobs_per_worker)
+        bids.zero_()
+        bids.scatter_(dim=1, index=top_index[:,:-1], src=bid_increments)
 
-    def fit_predict(self, X, **kwargs):
-        """Fit and predict in one step."""
-        self.fit(X, **kwargs)
-        return self.predict(X)
+        if counter < 100 and index is not None:
+            # If we were successful on the last round, put in a minimal bid to retain
+            # the job only if noone else bids. After N iterations, keep it anyway.
+            bids.view(-1)[index] = eps
+            # 
+        if counter > 1000:
+            bids.view(-1)[jobs_without_bidder] = eps
+        # Find jobs that was a top choice for some worker
+        jobs_with_bidder = (bids > 0).any(0).nonzero(as_tuple=False).squeeze(1)
+        jobs_without_bidder = (bids == 0).all(0).nonzero(as_tuple=False).squeeze(1)
+
+        # Find the highest bidding worker per job
+        high_bids, high_bidders = bids[:, jobs_with_bidder].max(dim=0)
+        if high_bidders.size(0) == num_jobs:
+            # All jobs were bid for
+            break
+        
+        # Make popular items more expensive
+        cost[:, jobs_with_bidder] += high_bids
+        value = worker_and_job_to_score - cost
+
+        # # Hack to make sure that this item will be in the winning worker's top-k next time
+        index = (high_bidders * num_jobs) + jobs_with_bidder
+        value.view(-1)[index] = worker_and_job_to_score.view(-1)[index]
+        counter += 1
     
-    def transform(self, X):
-        """Transform X to a cluster-distance space."""
-        if not self._is_fitted:
-            raise RuntimeError("Model not fitted yet")
+
+    if return_token_to_worker:
+        return high_bidders
+    _, sorting = torch.sort(high_bidders)
+    assignment = jobs_with_bidder[sorting]
+    assert len(assignment.unique()) == num_jobs
+
+    return assignment.view(-1)
+
+
+class KMeans(object):
+    def __init__(self, n_clusters=None, cluster_centers=None, device=torch.device('cpu'), balanced=False,use_jax=True):
+        self.n_clusters = n_clusters
+        self.cluster_centers = cluster_centers
+        self.device = device
+        self.balanced = balanced
+        self.use_jax = use_jax
+    
+    @classmethod
+    def load(cls, path_to_file):
+        with open(path_to_file, 'rb') as f:
+            saved = pickle.load(f)
+        return cls(saved['n_clusters'], saved['cluster_centers'], torch.device('cpu'), saved['balanced'])
+    
+    def save(self, path_to_file):
+        with open(path_to_file, 'wb+') as f :
+            pickle.dump(self.__dict__, f)
+
+    def initialize(self, X):
+        num_samples = len(X)
+        indices = np.random.choice(num_samples, self.n_clusters, replace=False)
+        initial_state = X[indices]
+        return initial_state
+    
+    def fit(
+            self,
+            X,
+            tol=1e-3,
+            tqdm_flag=True,
+            iter_limit=0,
+            online=False,
+            iter_k=None
+    ):
+        if tqdm_flag:
+            print(f'running k-means on {self.device}..')
+        X = X.float()
+        X = X.to(self.device)
+
+        # initialize
+        if not online or (online and iter_k == 0):  # ToDo: make this less annoyingly weird
+            self.cluster_centers = self.initialize(X)
+            
+
+        iteration = 0
+        if tqdm_flag:
+            tqdm_meter = tqdm(desc='[running kmeans]')
+        done=False
+        while True:
+            if self.balanced:
+                distance_matrix = jax_pairwise_distance(X.numpy(), self.cluster_centers.numpy())
+                distance_matrix = torch.tensor(distance_matrix)
+                cluster_assignments = auction_lap(-distance_matrix)
+            else:
+                if self.use_jax:
+                    dis = jax_pairwise_distance(X.numpy(), self.cluster_centers.numpy())
+                else:
+                    dis = torch_pairwise_distance(X, self.cluster_centers)
+                dis = torch.tensor(dis)
+                cluster_assignments = torch.argmin(dis, dim=1)
+            
+            initial_state_pre = self.cluster_centers.clone()
+            for index in range(self.n_clusters):
+                selected = torch.nonzero(cluster_assignments == index).squeeze().to(self.device)
+
+                selected = torch.index_select(X, 0, selected)
+
+                # https://github.com/subhadarship/kmeans_pytorch/issues/16
+                if selected.shape[0] == 0:
+                    selected = X[torch.randint(len(X), (1,))]
+                
+                self.cluster_centers[index] = selected.mean(dim=0)
+
+            center_shift = torch.sum(
+                torch.sqrt(
+                    torch.sum((self.cluster_centers - initial_state_pre) ** 2, dim=1)
+                ))
+
+            # increment iteration
+            iteration = iteration + 1
+
+            # update tqdm meter
+            if tqdm_flag:
+                tqdm_meter.set_postfix(
+                    iteration=f'{iteration}',
+                    center_shift=f'{center_shift ** 2:0.6f}',
+                    tol=f'{tol:0.6f}'
+                )
+                tqdm_meter.update()
+            if center_shift ** 2 < tol:
+                break
+            if iter_limit != 0 and iteration >= iter_limit:
+                break
         
-        X = np.asarray(X)
-        
-        if self.use_jax:
-            # Return distances to all centroids using JAX
-            return jax_pairwise_distance(X, self.cluster_centers_)
+        return cluster_assignments.cpu()
+
+
+    def predict(
+            self,X, return_distances=False):
+        """
+        predict using cluster centers
+        :param X: (torch.tensor) matrix
+        :param cluster_centers: (torch.tensor) cluster centers
+        :param distance: (str) distance [options: 'euclidean', 'cosine'] [default: 'euclidean']
+        :param device: (torch.device) device [default: 'cpu']
+        :param gamma_for_soft_dtw: approaches to (hard) DTW as gamma -> 0
+        :return: (torch.tensor) cluster ids
+        """
+
+
+        #if X is a numpy array convert it into a torch tensor
+        if isinstance(X, np.ndarray):
+            X = torch.from_numpy(X)
+        # convert to float
+        X = X.float()
+        # transfer to device
+        if self.device != torch.device('cpu'):
+            X = X.to(self.device)
+        distance_matrix = jax_pairwise_distance(X, self.cluster_centers)
+        distance_matrix = torch.tensor(distance_matrix)
+        cluster_assignments = torch.argmin(distance_matrix, dim=1 if len(distance_matrix.shape) > 1 else 0)
+        if len(distance_matrix.shape) == 1:
+            cluster_assignments = cluster_assignments.unsqueeze(0)
+        if return_distances:
+            return cluster_assignments.cpu(), distance_matrix
         else:
-            # Fall back to sklearn's transform
-            return self._sklearn_kmeans.transform(X)
+            return cluster_assignments.cpu()
 
 
 def get_sklearn_feature_pipeline(n_components, random_seed):
@@ -329,10 +411,15 @@ def get_sklearn_feature_pipeline(n_components, random_seed):
 
 
 
-def fit_kmeans(iterable, n_clusters, batch_size, **kwargs):
+from torch.utils.data import DataLoader
+
+def fit_kmeans(embeddings, n_clusters, batch_size, **kwargs):
+    
+    embeddings = DataLoader(embeddings, batch_size=batch_size)
+    
     kmeans = KMeans(n_clusters=n_clusters, balanced=True, **kwargs)
     with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
-        for i,batch in enumerate(iterable):
+        for i,batch in enumerate(embeddings):
             pbar.update(batch.shape[0])
             kmeans.fit(batch, iter_limit=20, online=True, iter_k=i)
     return kmeans
