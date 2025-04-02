@@ -1,6 +1,6 @@
 import os
 import time
-os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
+# os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
 import ray
 import ray.data
 import pandas as pd
