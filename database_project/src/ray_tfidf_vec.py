@@ -531,7 +531,7 @@ def process_stage2_group(
     
     print(f"[{stage_label}] Model fitting tasks submitted.")
     # We return the cluster_id and the reference to the models
-    return [(cluster_a_id, models_ref)]
+    return [ {"cluster_a_id":models_ref}]
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
@@ -596,19 +596,10 @@ def run_clustering_pipeline(ds, cfg: object):
     )
     
     # tagged_ds_A = tagged_ds_A.materialize()
-    print("Stage 1 inference complete. Schema:", tagged_ds_A.schema())
-    print("Sample row after Stage 1:", tagged_ds_A.take(1)) # Debug
-    print("--- Stage 1 Done ---")
-
-
-    # --- Stage 2: Train and Infer ---
-    print("--- Stage 2 Starting ---")
-    # Train Stage 2 models (one per Stage 1 cluster) using map_groups
-    print("Training Stage 2 models (one per Stage 1 cluster)...")
+    print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
+    
     
 
-    
-    # process_stage2_group returns (cluster_a_id, models_ref)
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
         lambda group_df: process_stage2_group(group_df, cfg=cfg),
         num_cpus=cfg.stage2_train_cpus,
