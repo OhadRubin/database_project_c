@@ -143,22 +143,22 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
     nearest_cluster_padded = pad_shard_unpad(nearest_cluster_bound,
                                              static_return=False,static_argnums=())
     def nearest_cluster(batch):
-        if isinstance(batch, torch.Tensor):
-            batch = batch.numpy()
-        # else:
+        # if isinstance(batch, torch.Tensor):
+        #     batch = batch.numpy()
+        # # else:
             
-        #     batch = np.array(batch)
-        print(jax.tree.map(lambda x: x.shape, batch),flush=True)
-        # batch = jax.device_put(batch)
-        if isinstance(batch, np.ndarray):
-            print(f"{batch.shape=}",flush=True)
-        elif isinstance(batch, list):
-            print(f"{len(batch)=}",flush=True)
-            try:
-                print(f"{batch[0].shape=}",flush=True)
-            except:
-                print(f"{batch=}",flush=True)
-        batch = np.stack(batch,axis=0).reshape(2048,128)
+        # #     batch = np.array(batch)
+        # print(jax.tree.map(lambda x: x.shape, batch),flush=True)
+        # # batch = jax.device_put(batch)
+        # if isinstance(batch, np.ndarray):
+        #     print(f"{batch.shape=}",flush=True)
+        # elif isinstance(batch, list):
+        #     print(f"{len(batch)=}",flush=True)
+        #     try:
+        #         print(f"{batch[0].shape=}",flush=True)
+        #     except:
+        #         print(f"{batch=}",flush=True)
+        # batch = np.stack(batch,axis=0).reshape(2048,128)
             
         batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
@@ -526,8 +526,8 @@ class KMeansInferenceModel:
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
         self.cluster_col_name = cluster_col_name
 
-    def __call__(self, batch: pd.DataFrame):
-        embeddings = batch["embeddings"].to_numpy()
+    def __call__(self, batch: Dict[str, np.ndarray]):
+        embeddings = batch["embeddings"]
         # 2. Predict Cluster
         batch[self.cluster_col_name] = self.tagging_func(embeddings)
         batch.drop(columns=["embeddings"], inplace=True)
@@ -688,7 +688,7 @@ def run_clustering_pipeline(ds, cfg: object):
         )
         tagged_ds_A = emb_tagged_ds_A.map_batches(
             KMeansInferenceModel,
-            batch_format="pandas",
+            batch_format="numpy",
             batch_size=2048,
             resources={"TPU-v4-8-head": 1},
             num_cpus=100,
