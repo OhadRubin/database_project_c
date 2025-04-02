@@ -481,23 +481,44 @@ def fit_models_remote(
     return vectorizer, kmeans
 
 
-class InferenceModel:
+
+
+class TFIDFInferenceModel:
     def __init__(self,
         vectorizer_ref: ray.ObjectRef,
-        kmeans_ref: ray.ObjectRef,
+        # kmeans_ref: ray.ObjectRef,
         # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
-        cluster_col_name: str
+        # cluster_col_name: str
         ):
         self.vectorizer = ray.get(vectorizer_ref)
-        self.kmeans = ray.get(kmeans_ref)
-        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
-        self.cluster_col_name = cluster_col_name
+        # self.kmeans = ray.get(kmeans_ref)
+        # self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
+        # self.cluster_col_name = cluster_col_name
 
     def __call__(self, batch: pd.DataFrame):
         texts = batch["text"].tolist()
         embeddings = self.vectorizer.transform(texts)
         # 2. Predict Cluster
+        batch["embeddings"] = embeddings
+        return batch
+    
+class KMeansInferenceModel:
+    def __init__(self,
+        # vectorizer_ref: ray.ObjectRef,
+        kmeans_ref: ray.ObjectRef,
+        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
+        cluster_col_name: str
+        ):
+        # self.vectorizer = ray.get(vectorizer_ref)
+        self.kmeans = ray.get(kmeans_ref)
+        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
+        self.cluster_col_name = cluster_col_name
+
+    def __call__(self, batch: pd.DataFrame):
+        embeddings = batch["embeddings"]
+        # 2. Predict Cluster
         batch[self.cluster_col_name] = self.tagging_func(embeddings)
+        batch.drop(columns=["embeddings"], inplace=True)
         return batch
 
 def apply_models_batch(
@@ -644,14 +665,23 @@ def run_clustering_pipeline(ds, cfg: object):
             concurrency=10,
         )
     else:
-        tagged_ds_A = ds.map_batches(
-            InferenceModel,
+        emb_tagged_ds_A = ds.map_batches(
+            TFIDFInferenceModel,
+            batch_format="pandas",
+            batch_size=cfg.stage1_inf_batch_size,
+            # resources={"TPU-v4-8-head": 1},
+            num_cpus=100,
+            concurrency=10,
+            fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
+        )
+        tagged_ds_A = emb_tagged_ds_A.map_batches(
+            KMeansInferenceModel,
             batch_format="pandas",
             batch_size=cfg.stage1_inf_batch_size,
             resources={"TPU-v4-8-head": 1},
-            num_cpus=210,
+            num_cpus=100,
             concurrency=10,
-            fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref, "kmeans_ref": kmeans_s1_ref, "cluster_col_name": CLUSTER_A_COL},
+            fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref, "cluster_col_name": CLUSTER_A_COL},
         )
         
     
