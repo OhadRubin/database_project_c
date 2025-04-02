@@ -544,7 +544,7 @@ def deserialize_objectref_dict(objectref_dict):
 
 
 
-os.makedirs("/tmp/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
+os.makedirs("/dev/shm/gcs_cache/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     limit = cfg.get("ray_max_docs_limit", None)
