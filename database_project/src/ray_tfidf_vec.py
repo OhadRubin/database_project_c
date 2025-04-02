@@ -531,7 +531,7 @@ def process_stage2_group(
     
     print(f"[{stage_label}] Model fitting tasks submitted.")
     # We return the cluster_id and the reference to the models
-    return [ {"cluster_a_id":models_ref}]
+    return [ {"cluster_a_id":cluster_a_id, "models_ref":models_ref}]
 
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
