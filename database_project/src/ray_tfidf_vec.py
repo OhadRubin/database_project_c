@@ -732,7 +732,7 @@ def tfidf_minhash_ray(args):
         "stage2_train_kmeans_bs": 512,
         "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
         "stage2_inf_batch_size": 1000,
-        "stage2_train_cpus": 16, # Reduced from 70 to fit cluster capacity
+        "stage2_train_cpus": 128, # Reduced from 70 to fit cluster capacity
         "stage3_train_kmeans_bs": 256,
         "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
         "stage3_proc_cpus": 8, # Reduced from 30 to fit cluster capacity
