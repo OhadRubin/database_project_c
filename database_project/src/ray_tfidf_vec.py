@@ -705,12 +705,7 @@ def run_clustering_pipeline(ds, cfg: object):
     )
     print("--- Pipeline Finished ---")
 
-
-# if __name__ == "__main__":
-    # --- Configuration ---
-    # Set the path to your configuration file
     
-# from config_dict import config_dict
 from ml_collections import config_dict
 import glob
 def tfidf_minhash_ray(args):
