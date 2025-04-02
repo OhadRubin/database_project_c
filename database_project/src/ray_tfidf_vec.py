@@ -619,7 +619,7 @@ def run_clustering_pipeline(ds, cfg: object):
     
     # Create a named function instead of using partial directly
     def process_stage2_group_with_cfg(group_df):
-        return process_stage2_group(group_df, cluster_a_id, cfg=cfg)
+        return process_stage2_group(group_df, cfg=cfg)
     
     # process_stage2_group returns (cluster_a_id, models_ref)
     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
