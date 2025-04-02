@@ -534,6 +534,8 @@ def process_stage2_group(
     result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref}
     result = serialize_objectref_dict(result)
     return pd.DataFrame([result])
+
+
 def serialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.dumps(v) for k, v in objectref_dict.items()}
 

@@ -36,6 +36,7 @@ else
     echo "C4 files directory already exists at /dev/shm/c4_files"
 fi
 
+export LIBTPU_INIT_ARGS="--xla_tpu_megacore_fusion_allow_ags=false --xla_enable_async_collective_permute=true --xla_tpu_enable_ag_backward_pipelining=true --xla_tpu_enable_data_parallel_all_reduce_opt=true --xla_tpu_data_parallel_opt_different_sized_ops=true --xla_tpu_enable_async_collective_fusion=true --xla_tpu_enable_async_collective_fusion_multiple_steps=true --xla_tpu_overlap_compute_collective_tc=true --xla_enable_async_all_gather=true"
 
 eval "$(ssh-agent -s)"
 ssh-add ~/.ssh/tpu_key
@@ -77,6 +78,22 @@ if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
 else
     echo "Ray cluster is already running"
 fi
+
+sudo chown -R $USER:$USER /dev/shm/gcs_cache
+sudo umount -l /mnt/gcs_bucket
+sleep 1
+gcsfuse \
+        --implicit-dirs \
+        --file-cache-enable-parallel-downloads \
+        --file-cache-parallel-downloads-per-file 100 \
+        --file-cache-max-parallel-downloads -1 \
+        --file-cache-download-chunk-size-mb 10 \
+        --file-cache-max-size-mb 200000 \
+        --dir-mode 0777 \
+        -o allow_other --foreground \
+        --cache-dir /dev/shm/gcs_cache  \
+        meliad2_us2_backup /mnt/gcs_bucket &> ~/gcs_log.log &
+sleep 1
 
 
 # Wait until we have 10 nodes in the Ray cluster
