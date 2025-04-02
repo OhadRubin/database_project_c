@@ -592,7 +592,7 @@ def run_clustering_pipeline(ds, cfg: object):
     # Try with requested CPUs first
     models_s1_ref = fit_models_remote.options(
             num_cpus=cfg.stage1_train_cpus,
-            ray_remote_args={"resources":{"TPU": 4}},
+            resources={"TPU": 4},
     ).remote(
             cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
     )
