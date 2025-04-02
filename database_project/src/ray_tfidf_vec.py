@@ -677,7 +677,7 @@ def run_clustering_pipeline(ds, cfg: object):
         tagged_ds_A = emb_tagged_ds_A.map_batches(
             KMeansInferenceModel,
             batch_format="pandas",
-            batch_size=cfg.stage1_inf_batch_size,
+            batch_size=2048,
             resources={"TPU-v4-8-head": 1},
             num_cpus=100,
             concurrency=10,
