@@ -1,3 +1,6 @@
+import os
+import time
+os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
 import ray
 import ray.data
 import pandas as pd
@@ -544,7 +547,7 @@ def deserialize_objectref_dict(objectref_dict):
 
 
 
-os.makedirs("/dev/shm/gcs_cache/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
+os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     limit = cfg.get("ray_max_docs_limit", None)
@@ -713,7 +716,7 @@ import glob
 def tfidf_minhash_ray(args):
 
     dummy_config = {
-        "base_dir": "/dev/shm/gcs_cache/ray_clustering_output",
+        "base_dir": "/mnt/gcs_bucket/ray_clustering_output",
         "cluster_layout": [5, 3, 2], # Smaller example layout
         "max_docs": 5000, # Sample size for training
         "stage1_train_kmeans_bs": 1024,
