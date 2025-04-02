@@ -64,20 +64,7 @@ else
     IS_HEAD=false
 fi
 
-echo "Checking Ray cluster status..."
-if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
-    echo "Ray cluster is not running. Starting Ray cluster..."
-    # Start Ray in head mode
-    if $IS_HEAD; then
-        $RAY_EXEC start --head --disable-usage-stats
-        echo "Ray cluster started in head mode"
-    else
-        $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block
-        echo "Ray cluster joined as worker node"
-    fi
-else
-    echo "Ray cluster is already running"
-fi
+
 
 sudo mkdir -p /dev/shm/gcs_cache
 sudo chmod 777 /dev/shm/gcs_cache
@@ -97,6 +84,26 @@ gcsfuse \
         --cache-dir /dev/shm/gcs_cache  \
         meliad2_us2_backup /mnt/gcs_bucket &> ~/gcs_log.log &
 sleep 1
+
+
+
+
+echo "Checking Ray cluster status..."
+if ! $RAY_EXEC status 2>/dev/null | grep -q "Ray runtime started"; then
+    echo "Ray cluster is not running. Starting Ray cluster..."
+    # Start Ray in head mode
+    if $IS_HEAD; then
+        $RAY_EXEC start --head --disable-usage-stats
+        echo "Ray cluster started in head mode"
+    else
+        $RAY_EXEC start --address="$HEAD_IP:6379" --disable-usage-stats --block
+        echo "Ray cluster joined as worker node"
+    fi
+else
+    echo "Ray cluster is already running"
+fi
+
+
 
 
 # Wait until we have 10 nodes in the Ray cluster
