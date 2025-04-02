@@ -415,7 +415,7 @@ from torch.utils.data import DataLoader
 
 def fit_kmeans(embeddings, n_clusters, batch_size, **kwargs):
     
-    embeddings = DataLoader(embeddings, batch_size=batch_size)
+    embeddings = DataLoader(embeddings, batch_size=batch_size, drop_last=True)
     
     kmeans = KMeans(n_clusters=n_clusters, balanced=True, **kwargs)
     with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
