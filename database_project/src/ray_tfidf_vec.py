@@ -617,7 +617,6 @@ def run_clustering_pipeline(ds, cfg: object):
     # Train Stage 2 models (one per Stage 1 cluster) using map_groups
     print("Training Stage 2 models (one per Stage 1 cluster)...")
     
-    # Create a named function instead of using partial directly
 
     
     # process_stage2_group returns (cluster_a_id, models_ref)
