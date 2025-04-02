@@ -523,7 +523,7 @@ class KMeansInferenceModel:
         ):
         # self.vectorizer = ray.get(vectorizer_ref)
         self.kmeans = ray.get(kmeans_ref)
-        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
+        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=8192)
         self.cluster_col_name = cluster_col_name
 
     def __call__(self, batch: Dict[str, np.ndarray]):
@@ -680,16 +680,16 @@ def run_clustering_pipeline(ds, cfg: object):
         emb_tagged_ds_A = ds.map_batches(
             TFIDFInferenceModel,
             batch_format="pandas",
-            batch_size=cfg.stage1_inf_batch_size,
+            batch_size=1024,
             # resources={"TPU-v4-8-head": 1},
-            num_cpus=100,
-            concurrency=10,
+            num_cpus=10,
+            concurrency=100,
             fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
         )
         tagged_ds_A = emb_tagged_ds_A.map_batches(
             KMeansInferenceModel,
             batch_format="numpy",
-            batch_size=2048,
+            batch_size=8192,
             resources={"TPU-v4-8-head": 1},
             num_cpus=100,
             concurrency=10,
