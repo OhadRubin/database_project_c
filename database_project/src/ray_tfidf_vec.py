@@ -482,21 +482,6 @@ def run_clustering_pipeline(ds, cfg: object):
     print(f"Ray cluster status: {ray.cluster_resources()}")
     
     # Try to clear caches and force release resources
-    print("Clearing Ray object store and releasing resources...")
-    try:
-        # Try the newer Ray API first
-        ray.runtime_context.get_runtime_context().free_plasma_memory()
-    except (AttributeError, Exception) as e:
-        print(f"Using alternative method to free resources: {e}")
-        # Alternative approaches to free memory
-        import gc
-        gc.collect()  # Force Python garbage collection
-        ray._private.internal_api.free_unused_objects_in_object_store()  # Try internal API
-        # Also try manually destroying some objects if needed
-        ray.data.context.DatasetContext.get_current().execution_options.object_store_usage.force_object_transfer = True
-        
-    time.sleep(2)  # Give Ray time to release resources
-    print(f"Available resources after cache clearing: {ray.available_resources()}")
 
     # Fit Stage 1 models remotely
     print(f"Attempting to allocate {cfg.stage1_train_cpus} CPUs for Stage 1 training task...")
