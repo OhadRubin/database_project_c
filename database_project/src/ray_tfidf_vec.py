@@ -713,7 +713,7 @@ import glob
 def tfidf_minhash_ray(args):
 
     dummy_config = {
-        "base_dir": "/tmp/ray_clustering_output",
+        "base_dir": "/dev/shm/gcs_cache/ray_clustering_output",
         "cluster_layout": [5, 3, 2], # Smaller example layout
         "max_docs": 5000, # Sample size for training
         "stage1_train_kmeans_bs": 1024,
