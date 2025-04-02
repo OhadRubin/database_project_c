@@ -681,6 +681,24 @@ def run_clustering_pipeline(ds, cfg: object):
     # Define output path based on config
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     print(f"Writing final partitioned data to: {output_base_path}")
+    
+    # Use Ray to ensure directories exist on all workers
+    @ray.remote
+    def ensure_dir_exists(path):
+        os.makedirs(path, exist_ok=True)
+        return os.path.exists(path)
+    
+    # Create directories on all nodes in the Ray cluster
+    all_nodes_refs = []
+    for node_id in ray.nodes():
+        ref = ensure_dir_exists.options(resources={f"node:{node_id['NodeID']}": 0.001}).remote(output_base_path)
+        all_nodes_refs.append(ref)
+    
+    # Wait for all directory creation tasks to complete
+    creation_results = ray.get(all_nodes_refs)
+    print(f"Directory creation status on all nodes: {all(creation_results)}")
+    
+    # Create directory on the driver node as well
     os.makedirs(output_base_path, exist_ok=True)
 
     # Write to parquet, ideally partitioned by the cluster assignments
