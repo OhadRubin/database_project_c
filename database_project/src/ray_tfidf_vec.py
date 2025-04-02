@@ -618,7 +618,7 @@ def run_clustering_pipeline(ds, cfg: object):
         map_s1_func,
         batch_format="pandas",
         batch_size=cfg.stage1_inf_batch_size,
-        resources={"TPU-v4-8-head": 1},
+        # resources={"TPU-v4-8-head": 1},
         num_cpus=210,
         concurrency=10,
     )
@@ -695,6 +695,7 @@ def run_clustering_pipeline(ds, cfg: object):
         batch_size=cfg.stage2_inf_batch_size,
         resources={"TPU-v4-8-head": 1},
         concurrency=10,
+        num_cpus=210,
     )
     
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
