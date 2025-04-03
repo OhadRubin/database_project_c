@@ -479,17 +479,9 @@ def fit_models_remote(
 
 
 class TFIDFInferenceModel:
-    def __init__(self,
-        vectorizer_ref: ray.ObjectRef,
-        # kmeans_ref: ray.ObjectRef,
-        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
-        # cluster_col_name: str
-        ):
+    def __init__(self, vectorizer_ref: ray.ObjectRef):
         self.vectorizer = ray.get(vectorizer_ref)
-        # self.kmeans = ray.get(kmeans_ref)
-        # self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=2048)
-        # self.cluster_col_name = cluster_col_name
-
+        
     def __call__(self, batch: pd.DataFrame):
         texts = batch["text"].tolist()
         embeddings = self.vectorizer.transform(texts)
@@ -497,32 +489,14 @@ class TFIDFInferenceModel:
         batch["embeddings"] = list(embeddings)
         return batch
     
-class KMeansInferenceModelNumpy:
+
+
+class KMeansInferenceModel:
     def __init__(self,
-        # vectorizer_ref: ray.ObjectRef,
         kmeans_ref: ray.ObjectRef,
         # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
         cluster_col_name: str
         ):
-        # self.vectorizer = ray.get(vectorizer_ref)
-        self.kmeans = ray.get(kmeans_ref)
-        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=8192)
-        self.cluster_col_name = cluster_col_name
-
-    def __call__(self, batch: Dict[str, np.ndarray]):
-        embeddings = batch["embeddings"]
-        batch[self.cluster_col_name] = np.array(self.tagging_func(embeddings), dtype=np.int32)
-        batch.pop("embeddings")
-        return batch
-
-class KMeansInferenceModelPandas:
-    def __init__(self,
-        # vectorizer_ref: ray.ObjectRef,
-        kmeans_ref: ray.ObjectRef,
-        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
-        cluster_col_name: str
-        ):
-        # self.vectorizer = ray.get(vectorizer_ref)
         self.kmeans = ray.get(kmeans_ref)
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=8192)
         self.cluster_col_name = cluster_col_name
@@ -605,8 +579,6 @@ def run_clustering_pipeline(ds, cfg: object):
     if limit:
          ds = ds.limit(limit)
          print(f"Dataset limited to {limit} documents.")
-         
-    # --- Stage 1: Train and Infer ---
     print("--- Stage 1 Starting ---")
     n_clusters_a = cfg.cluster_layout[0]
     
@@ -614,34 +586,16 @@ def run_clustering_pipeline(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     
     
-    # Sample for Stage 1 Training
-    # sample_fraction = min(1.0, cfg.max_docs / ds.count()) if ds.count() > 0 else 0.0
-    # print(f"Sampling {sample_fraction:.2%} ({cfg.max_docs} max) for Stage 1 training...")
-    
     print("Stage 1 model fitting task submitted.")
     # sample_ds = ds.random_sample(fraction=sample_fraction)
     sample_ds = ds.limit(cfg.max_docs)
-    # Collect sample - check memory constraints if max_docs is huge
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
     print(f"Sample size: {len(sample_df)}")
 
 
     
-    
-    # Add detailed logging for resources
-    print(f"Available Ray cluster resources before Stage 1 training:")
-    resources_available = ray.available_resources()
-    for resource, amount in resources_available.items():
-        print(f"  - {resource}: {amount}")
-    print(f"Requesting {cfg.stage1_train_cpus} CPUs for Stage 1 training task")
-    print(f"Ray cluster status: {ray.cluster_resources()}")
-    
-    # Try to clear caches and force release resources
 
-    # Fit Stage 1 models remotely
-    print(f"Attempting to allocate {cfg.stage1_train_cpus} CPUs for Stage 1 training task...")
-    # Try with requested CPUs first
     models_s1_ref = fit_models_remote.options(
             num_cpus=cfg.stage1_train_cpus,
             resources={"TPU-v4-8-head": 1},
@@ -667,7 +621,7 @@ def run_clustering_pipeline(ds, cfg: object):
         fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
     )
     tagged_ds_A = emb_tagged_ds_A.map_batches(
-        KMeansInferenceModelPandas,
+        KMeansInferenceModel,
         batch_format="pandas",
         batch_size=8192,
         resources={"TPU-v4-8-head": 1},
@@ -678,7 +632,6 @@ def run_clustering_pipeline(ds, cfg: object):
     )
     
     
-    # tagged_ds_A = tagged_ds_A.materialize()
     print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
     def _process_stage2_group(group_df: pd.DataFrame):
