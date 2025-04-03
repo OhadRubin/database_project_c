@@ -143,23 +143,6 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
     nearest_cluster_padded = pad_shard_unpad(nearest_cluster_bound,
                                              static_return=False,static_argnums=())
     def nearest_cluster(batch):
-        # if isinstance(batch, torch.Tensor):
-        #     batch = batch.numpy()
-        # # else:
-            
-        # #     batch = np.array(batch)
-        # print(jax.tree.map(lambda x: x.shape, batch),flush=True)
-        # # batch = jax.device_put(batch)
-        # if isinstance(batch, np.ndarray):
-        #     print(f"{batch.shape=}",flush=True)
-        # elif isinstance(batch, list):
-        #     print(f"{len(batch)=}",flush=True)
-        #     try:
-        #         print(f"{batch[0].shape=}",flush=True)
-        #     except:
-        #         print(f"{batch=}",flush=True)
-        # batch = np.stack(batch,axis=0).reshape(2048,128)
-            
         batch_preds = nearest_cluster_padded(batch,
                                                         min_device_batch=kmeans_batch_size//n_local_devices)
         batch_preds = jax.device_get(batch_preds).reshape(-1).tolist()
@@ -658,44 +641,27 @@ def run_clustering_pipeline(ds, cfg: object):
     # Put them back as separate references
     vectorizer_s1_ref = ray.put(vectorizer_s1)
     kmeans_s1_ref = ray.put(kmeans_s1)
-    
-    # Inference Stage 1
-    print("Running Stage 1 inference...")
-    if False:
-        def map_s1_func(batch: pd.DataFrame):
-            return apply_models_batch(batch,
-                            vectorizer_ref=vectorizer_s1_ref,
-                            kmeans_ref=kmeans_s1_ref,
-                            cluster_col_name=CLUSTER_A_COL)
 
-        tagged_ds_A = ds.map_batches(
-            map_s1_func,
-            batch_format="pandas",
-            batch_size=cfg.stage1_inf_batch_size,
-            # resources={"TPU-v4-8-head": 1},
-            num_cpus=210,
-            concurrency=10,
-        )
-    else:
-        emb_tagged_ds_A = ds.map_batches(
-            TFIDFInferenceModel,
-            batch_format="pandas",
-            batch_size=1024,
-            # resources={"TPU-v4-8-head": 1},
-            num_cpus=10,
-            concurrency=100,
-            fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
-        )
-        tagged_ds_A = emb_tagged_ds_A.map_batches(
-            KMeansInferenceModel,
-            batch_format="numpy",
-            batch_size=8192,
-            resources={"TPU-v4-8-head": 1},
-            num_cpus=100,
-            concurrency=10,
-            fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref, "cluster_col_name": CLUSTER_A_COL},
-        )
-        
+    print("Running Stage 1 inference...")
+    emb_tagged_ds_A = ds.map_batches(
+        TFIDFInferenceModel,
+        batch_format="pandas",
+        batch_size=1024,
+        num_cpus=10,
+        concurrency=100,
+        fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
+    )
+    tagged_ds_A = emb_tagged_ds_A.map_batches(
+        KMeansInferenceModel,
+        batch_format="numpy",
+        batch_size=8192,
+        resources={"TPU-v4-8-head": 1},
+        num_cpus=100,
+        concurrency=10,
+        fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref,
+                               "cluster_col_name": CLUSTER_A_COL},
+    )
+    
     
     # tagged_ds_A = tagged_ds_A.materialize()
     print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
