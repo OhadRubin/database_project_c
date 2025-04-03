@@ -9,6 +9,7 @@ fi
 
 python3.10 -m pip install pyspark
 python3.10 -m pip install raydp
+python3.10 -m pip install --upgrade ray
 if [ ! -d "~/database_project_c" ]; then
     git clone https://github.com/OhadRubin/database_project_c
 fi
@@ -21,23 +22,18 @@ export POSTGRES_ADDRESS="postgresql+psycopg2://postgres:$REDIS_PASSWORD@34.141.2
 
 
 # Check if c4_files directory exists in /dev/shm
-if [ ! -d "/dev/shm/c4_files" ]; then
-    echo "C4 files directory not found, creating it..."
-    mkdir -p /dev/shm/c4_files
-    echo "Running C4 download script..."
-    while true; do
-        FILE_COUNT=$(ls /dev/shm/c4_files | wc -l)
-        if [ "$FILE_COUNT" -ne 40 ]; then
-            echo "Expected 40 files but found $FILE_COUNT files. Running download script again..."
-            python3.10 database_project/src/download_c4.py
-        else
-            echo "Verified 40 files in /dev/shm/c4_files"
-            break
-        fi
-    done
-else
-    echo "C4 files directory already exists at /dev/shm/c4_files"
-fi
+mkdir -p /dev/shm/c4_files
+echo "Running C4 download script..."
+while true; do
+    FILE_COUNT=$(ls /dev/shm/c4_files | wc -l)
+    if [ "$FILE_COUNT" -ne 40 ]; then
+        echo "Expected 40 files but found $FILE_COUNT files. Running download script again..."
+        python3.10 database_project/src/download_c4.py
+    else
+        echo "Verified 40 files in /dev/shm/c4_files"
+        break
+    fi
+done
 
 # export LIBTPU_INIT_ARGS="--xla_tpu_megacore_fusion_allow_ags=false --xla_enable_async_collective_permute=true --xla_tpu_enable_ag_backward_pipelining=true --xla_tpu_enable_data_parallel_all_reduce_opt=true --xla_tpu_data_parallel_opt_different_sized_ops=true --xla_tpu_enable_async_collective_fusion=true --xla_tpu_enable_async_collective_fusion_multiple_steps=true --xla_tpu_overlap_compute_collective_tc=true --xla_enable_async_all_gather=true"
 

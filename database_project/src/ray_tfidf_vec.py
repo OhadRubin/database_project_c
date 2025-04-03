@@ -497,7 +497,7 @@ class TFIDFInferenceModel:
         batch["embeddings"] = list(embeddings)
         return batch
     
-class KMeansInferenceModel:
+class KMeansInferenceModelNumpy:
     def __init__(self,
         # vectorizer_ref: ray.ObjectRef,
         kmeans_ref: ray.ObjectRef,
@@ -511,9 +511,26 @@ class KMeansInferenceModel:
 
     def __call__(self, batch: Dict[str, np.ndarray]):
         embeddings = batch["embeddings"]
-        # 2. Predict Cluster
         batch[self.cluster_col_name] = np.array(self.tagging_func(embeddings), dtype=np.int32)
         batch.pop("embeddings")
+        return batch
+
+class KMeansInferenceModelPandas:
+    def __init__(self,
+        # vectorizer_ref: ray.ObjectRef,
+        kmeans_ref: ray.ObjectRef,
+        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
+        cluster_col_name: str
+        ):
+        # self.vectorizer = ray.get(vectorizer_ref)
+        self.kmeans = ray.get(kmeans_ref)
+        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=8192)
+        self.cluster_col_name = cluster_col_name
+
+    def __call__(self, batch: pd.DataFrame):
+        embeddings = np.array([emb for emb in batch["embeddings"]])
+        batch[self.cluster_col_name] = np.array(self.tagging_func(embeddings), dtype=np.int32)
+        batch.drop(columns=["embeddings"], inplace=True)
         return batch
 
 def apply_models_batch(
@@ -531,10 +548,6 @@ def apply_models_batch(
     
     
     tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=2048)
-
-    # if vectorizer is None or kmeans is None:
-    #     assert False
-
     texts = batch["text"].tolist()
     # 1. Vectorize (Transform)
     embeddings = vectorizer.transform(texts)
@@ -584,6 +597,8 @@ def deserialize_objectref_dict(objectref_dict):
 
 
 os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
+
+
 def run_clustering_pipeline(ds, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     limit = cfg.get("ray_max_docs_limit", None)
@@ -652,8 +667,8 @@ def run_clustering_pipeline(ds, cfg: object):
         fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
     )
     tagged_ds_A = emb_tagged_ds_A.map_batches(
-        KMeansInferenceModel,
-        batch_format="numpy",
+        KMeansInferenceModelPandas,
+        batch_format="pandas",
         batch_size=8192,
         resources={"TPU-v4-8-head": 1},
         num_cpus=100,
@@ -737,7 +752,7 @@ def run_clustering_pipeline(ds, cfg: object):
         concurrency=10,
         num_cpus=210,
     )
-    
+        
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
     
     
