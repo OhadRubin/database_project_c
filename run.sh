@@ -2,12 +2,15 @@
 if ! command -v java &> /dev/null; then
     echo "Java not found, installing..."
     sudo apt-get install default-jdk -y
-    python3.10 -m pip install pyspark
-    python3.10 -m pip install raydp
-    python3.10 -m pip install git+https://github.com/OhadRubin/sparkit-learn
-    git clone https://github.com/OhadRubin/database_project_c
+    
 else
     echo "Java is already installed"
+fi
+
+python3.10 -m pip install pyspark
+python3.10 -m pip install raydp
+if [ ! -d "~/database_project_c" ]; then
+    git clone https://github.com/OhadRubin/database_project_c
 fi
 
 (cd ~/database_project_c && git pull)
