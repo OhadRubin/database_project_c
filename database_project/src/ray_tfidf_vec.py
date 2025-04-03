@@ -512,7 +512,7 @@ class KMeansInferenceModel:
     def __call__(self, batch: Dict[str, np.ndarray]):
         embeddings = batch["embeddings"]
         # 2. Predict Cluster
-        batch[self.cluster_col_name] = self.tagging_func(embeddings)
+        batch[self.cluster_col_name] = np.array(self.tagging_func(embeddings), dtype=np.int32)
         batch.pop("embeddings")
         return batch
 
