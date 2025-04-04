@@ -436,10 +436,14 @@ def fit_kmeans(embeddings, kmeans_cfg, **kwargs):
 @ray.remote
 def fit_models_remote(
     cfg: object,
-    sample_data: pd.DataFrame,
+    ds: pd.DataFrame,
 ) -> Tuple[object, object]:
+    sample_ds = ds.limit(cfg.max_docs)
+    print(f"Collecting sample...")
+    sample_df = sample_ds.to_pandas()
+    print(f"Sample size: {len(sample_df)}")
     stage_label = cfg.cluster_col_name
-    texts = sample_data["text"].tolist()
+    texts = sample_df["text"].tolist()
     print(f"[{stage_label}] Fitting vectorizer on {len(texts)} samples...")
     vectorizer = get_sklearn_feature_pipeline(cfg.tfidf)
     embeddings = vectorizer.fit_transform(texts)
@@ -454,7 +458,8 @@ def fit_models_remote(
 
 class TFIDFInferenceModel:
     def __init__(self, vectorizer_ref: ray.ObjectRef):
-        self.vectorizer = ray.get(vectorizer_ref)
+        vectorizer, _ =ray.get(vectorizer_ref)
+        self.vectorizer = vectorizer
         
     def __call__(self, batch: pd.DataFrame):
         texts = batch["text"].tolist()
@@ -469,7 +474,8 @@ class KMeansInferenceModel:
         kmeans_ref: ray.ObjectRef,
         cfg: str
         ):
-        self.kmeans = ray.get(kmeans_ref)
+        _, kmeans = ray.get(kmeans_ref)
+        self.kmeans = kmeans
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=cfg.kmeans.inference.batch_size)
         self.cluster_col_name = cfg.cluster_col_name
 
@@ -485,11 +491,8 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 
 def fit_predict(ds: ray.data.Dataset, cfg: object):
     print(f"--- {cfg.pretty_name} Starting ---")
-    start_time = time.time()
-    sample_ds = ds.limit(cfg.max_docs)
-    print(f"Collecting sample...")
-    sample_df = sample_ds.to_pandas()
-    print(f"Sample size: {len(sample_df)}")
+    
+
 
 
     
@@ -498,22 +501,21 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
             num_cpus=cfg.tfidf.train.num_cpus,
             resources={"TPU-v4-8-head": 1},
     ).remote(
-            cfg, sample_df
+            cfg, ds
     )
     
-    vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
+    # vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
     
-    vectorizer_s1_ref = ray.put(vectorizer_s1)
-    kmeans_s1_ref = ray.put(kmeans_s1)
+    # vectorizer_s1_ref = ray.put(vectorizer_s1)
+    # kmeans_s1_ref = ray.put(kmeans_s1)
 
-    print(f"Running {cfg.pretty_name} inference...")
     emb_tagged_ds_A = ds.map_batches(
         TFIDFInferenceModel,
         batch_format="pandas",
         batch_size=cfg.tfidf.inference.batch_size,
         num_cpus=cfg.tfidf.inference.num_cpus,
         concurrency=cfg.tfidf.inference.concurrency,
-        fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
+        fn_constructor_kwargs={"vectorizer_ref": models_s1_ref},
     )
     tagged_ds_A = emb_tagged_ds_A.map_batches(
         KMeansInferenceModel,
@@ -522,19 +524,22 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
         resources={"TPU-v4-8-head": 1},
         num_cpus=cfg.kmeans.inference.num_cpus,
         concurrency=cfg.kmeans.inference.concurrency,
-        fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref,
+        fn_constructor_kwargs={"kmeans_ref": models_s1_ref,
                                "cfg": cfg},
     )
     
-    tagged_ds_A = tagged_ds_A.materialize()
+
+    return tagged_ds_A
+
+def stage1(ds: ray.data.Dataset, cfg: object):
+    start_time = time.time()
+    tagged_ds_A = fit_predict(ds, cfg).materialize()
+
     end_time = time.time()
     print(f"{cfg.pretty_name} complete. Time taken: {end_time - start_time:.2f} seconds")
     print(f"Schema:", tagged_ds_A.schema())
     print(f"Sample row after {cfg.pretty_name}:", tagged_ds_A.take(1))
     return tagged_ds_A
-
-def stage1(ds: ray.data.Dataset, cfg: object):
-    return fit_predict(ds, cfg)
     
     
 
@@ -677,15 +682,20 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     stage1_clusters = cfg.cluster_spec[0]
     stage1_cluster_col_name = cfg.partition_cols[0]
     
-    final_ds = None
     og_ds = ds
+    ds_ref_list = []
     for cluster_id in range(stage1_clusters):
         ds = og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")
+        new_ds = fit_predict_remote.remote(ds, cfg)
+        ds_ref_list.append(new_ds)
+        
+    final_ds = None
+    for ds_ref in ds_ref_list:
         if final_ds is not None:
-            new_ds = fit_predict_remote.remote(ds, cfg)
-            final_ds = final_ds.union(new_ds)
+            ds = ray.get(ds_ref)
+            final_ds = final_ds.union(ds)
         else:
-            final_ds = fit_predict_remote.remote(ds, cfg)
+            final_ds = ray.get(ds_ref)
 
 
     return final_ds.materialize()
