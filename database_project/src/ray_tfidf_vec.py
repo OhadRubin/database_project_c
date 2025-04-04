@@ -690,7 +690,7 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
 
-
+    final_ds = final_ds.sort(cfg.partition_cols[:2])
 
     return final_ds.materialize()
 
@@ -708,10 +708,7 @@ def read_config(path):
 
 
 def fake_stage1(ds, cfg):
-    # Assign random cluster IDs to each element
     import numpy as np
-    
-    # Get the number of clusters from the configuration
     n_clusters = cfg.kmeans.n_clusters
     
     # Create a copy of the dataset with random cluster assignments
@@ -760,6 +757,8 @@ def run_clustering_pipeline(ds, cfg: object):
         ds = func(ds, stage_cfg)
     
     final_ds = ds.materialize()
+    
+    final_ds:ray.data.Dataset = final_ds.repartition(cfg.num_blocks)
     
     print(f"Final dataset successfully written to {output_base_path}")
     final_ds.write_parquet(
