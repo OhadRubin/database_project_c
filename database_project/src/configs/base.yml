@@ -9,6 +9,8 @@ base_stage:
         n_components: 128
         random_seed: 42
         batch_size: 1024
+        num_cpus: 210
+
       inference:
         cpus: 5
         batch_size: 1024

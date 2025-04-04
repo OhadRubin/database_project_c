@@ -639,18 +639,18 @@ def stage1(ds: ray.data.Dataset, cfg: object):
     emb_tagged_ds_A = ds.map_batches(
         TFIDFInferenceModel,
         batch_format="pandas",
-        batch_size=1024,
-        num_cpus=10,
-        concurrency=100,
+        batch_size=cfg.tfidf.inference.batch_size,
+        num_cpus=cfg.tfidf.inference.num_cpus,
+        concurrency=cfg.tfidf.inference.concurrency,
         fn_constructor_kwargs={"vectorizer_ref": vectorizer_s1_ref},
     )
     tagged_ds_A = emb_tagged_ds_A.map_batches(
         KMeansInferenceModel,
         batch_format="pandas",
-        batch_size=8192,
+        batch_size=cfg.kmeans.inference.batch_size,
         resources={"TPU-v4-8-head": 1},
-        num_cpus=100,
-        concurrency=10,
+        num_cpus=cfg.kmeans.inference.num_cpus,
+        concurrency=cfg.kmeans.inference.concurrency,
         fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref,
                                "cluster_col_name": cfg.cluster_col_name},
     )
