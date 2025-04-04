@@ -667,16 +667,28 @@ def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
 def fit_predict_remote(ds: ray.data.Dataset, cfg: object):
     return fit_predict(ds, cfg)
     
+    
+    
+from ray.util.queue import Queue, Empty
+
+
+
 def new_stage2(ds: ray.data.Dataset, cfg: object):
     stage1_clusters = cfg.cluster_spec[0]
     stage1_cluster_col_name = cfg.partition_cols[0]
-    ds_refs = []
+    
+    final_ds = None
+    og_ds = ds
     for cluster_id in range(stage1_clusters):
-        ds = ds.filter(f"{stage1_cluster_col_name} == {cluster_id}")
-        ds_refs.append(fit_predict_remote.remote(ds, cfg))
-    ds_refs = ray.get(ds_refs)
-    final_ds = ray.data.concat(ds_refs)
-    return final_ds
+        ds = og_ds.filter(f"{stage1_cluster_col_name} == {cluster_id}")
+        if final_ds is not None:
+            new_ds = fit_predict_remote.remote(ds, cfg)
+            final_ds = final_ds.union(new_ds)
+        else:
+            final_ds = fit_predict_remote.remote(ds, cfg)
+
+
+    return final_ds.materialize()
 
 from ml_collections import config_dict
 import glob
@@ -736,7 +748,7 @@ def run_clustering_pipeline(ds, cfg: object):
     for stage, func in zip(cfg.stages_list,[
         # stage1, 
         fake_stage1,
-        stage2
+        new_stage2
         ]):
         stage_cfg = base_cfg.copy_and_resolve_references()
         stage_cfg.update(stage)
