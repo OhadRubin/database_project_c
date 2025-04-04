@@ -670,7 +670,7 @@ def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
 
 @ray.remote
 def fit_predict_remote(ds: ray.data.Dataset, cfg: object):
-    return fit_predict(ds, cfg)
+    return fit_predict(ds.materialize(), cfg)
     
     
     
@@ -727,7 +727,7 @@ def fake_stage1(ds, cfg):
     ds = ds.map_batches(
         assign_random_cluster,
         batch_format="pandas",
-        batch_size=1024
+        batch_size=2048
     )
     
     return ds
