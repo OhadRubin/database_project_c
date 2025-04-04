@@ -14,7 +14,7 @@ base_stage:
       inference:
         num_cpus: 5
         batch_size: 1024
-        concurrency: 200
+        concurrency: 400
   kmeans:
       train:
         batch_size: 2048
@@ -34,9 +34,10 @@ stages_list:
   - name: stage2
     pretty_name: "Stage 2"
     cluster_col_name: cluster_B
+
     tfidf:
       inference:
-        concurrency: 30
+        concurrency: 40
     kmeans:
       n_clusters: 10
       inference:
