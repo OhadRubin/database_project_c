@@ -1,0 +1,30 @@
+base_stage:
+  tfidf: 
+      train:
+        max_docs: 50000
+        n_components: 128
+        random_seed: 42
+        batch_size: 1024
+
+      inference:
+        cpus: 5
+        batch_size: 1024
+        concurrency: 100
+  kmeans:
+      train:
+        max_docs: 50000
+        batch_size: 1024
+        iter_limit: 20
+
+      inference:
+        batch_size: 8192
+        num_cpus: 20
+        concurrency: 10
+
+stages:
+  - name: stage1
+    kmeans:
+      n_clusters: 10
+  - name: stage2
+    kmeans:
+      n_clusters: 10

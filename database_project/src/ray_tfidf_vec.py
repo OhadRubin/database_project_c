@@ -412,9 +412,14 @@ def get_sklearn_feature_pipeline(n_components, random_seed):
     return vectorizer
 
 
-
 import ray.cloudpickle as cloudpickle
 from torch.utils.data import DataLoader
+
+def serialize_objectref_dict(objectref_dict):
+    return {k: cloudpickle.dumps(v) for k, v in objectref_dict.items()}
+
+def deserialize_objectref_dict(objectref_dict):
+    return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
 def fit_kmeans(embeddings, n_clusters, batch_size, **kwargs):
     
@@ -441,7 +446,7 @@ def fit_models_remote(
     sample_data: pd.DataFrame,
     n_clusters: int,
     stage_label: str, # e.g., "Stage1", "Stage2_GroupX", etc.
-    kmeans_train_batch_size_key: str, # e.g., "stage1_train_kmeans_bs"
+    kmeans_train_batch_size: str, # e.g., "stage1_train_kmeans_bs"
 ) -> Tuple[object, object]:
     """Fits vectorizer and KMeans on sample data.
     
@@ -468,9 +473,9 @@ def fit_models_remote(
     print(f"[{stage_label}] Vectorizer fitting done. Embedding shape: {embeddings.shape}")
 
     print(f"[{stage_label}] Fitting K-means with {n_clusters} clusters...")
-    kmeans_batch_size_config = getattr(cfg, kmeans_train_batch_size_key)
+    # kmeans_batch_size_config = getattr(cfg, kmeans_train_batch_size_key)
         
-    kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_batch_size_config) # Pass computed BS if needed
+    kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_train_batch_size) # Pass computed BS if needed
     print(f"[{stage_label}] K-means fitting done.")
 
     return vectorizer, kmeans
@@ -494,7 +499,6 @@ class TFIDFInferenceModel:
 class KMeansInferenceModel:
     def __init__(self,
         kmeans_ref: ray.ObjectRef,
-        # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
         cluster_col_name: str
         ):
         self.kmeans = ray.get(kmeans_ref)
@@ -521,7 +525,7 @@ def apply_models_batch(
     kmeans = ray.get(kmeans_ref)
     
     
-    tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=2048)
+    tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=8192)
     texts = batch["text"].tolist()
     # 1. Vectorize (Transform)
     embeddings = vectorizer.transform(texts)
@@ -551,7 +555,7 @@ def process_stage2_group(
         sample_data=sample_df,
         n_clusters=n_clusters_b,
         stage_label=stage_label,
-        kmeans_train_batch_size_key="stage2_train_kmeans_bs"
+        kmeans_train_batch_size=cfg.stage2_train_kmeans_bs
     )
     # Don't try to unpack the Ray object reference
     
@@ -562,28 +566,57 @@ def process_stage2_group(
     return pd.DataFrame([result])
 
 
-def serialize_objectref_dict(objectref_dict):
-    return {k: cloudpickle.dumps(v) for k, v in objectref_dict.items()}
-
-def deserialize_objectref_dict(objectref_dict):
-    return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
 
+
+def _apply_stage2_batch(batch: pd.DataFrame, stage2_models_dict_ref:object) -> pd.DataFrame:
+    models_dict = ray.get(stage2_models_dict_ref) # Get dict {cluster_id: models_ref}
+    batch[CLUSTER_B_COL] = -1 # Initialize column
+    
+    # Process each cluster_A group within the batch
+    for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
+        models_ref = models_dict.get(cluster_a_id)
+        
+        # Skip if no models available for this cluster
+        if models_ref is None:
+            print(f"Warning: No models available for cluster_A={cluster_a_id}")
+            continue
+            
+        try:
+            vectorizer, kmeans = ray.get(models_ref)
+            
+            # Skip if any model is None
+            if vectorizer is None or kmeans is None:
+                print(f"Warning: Missing model components for cluster_A={cluster_a_id}")
+                continue
+                
+            processed_group = apply_models_batch(
+                group.copy(), # Pass copy to avoid modifying original slice
+                vectorizer_ref=ray.put(vectorizer),
+                kmeans_ref=ray.put(kmeans),
+                cluster_col_name=CLUSTER_B_COL # Predict into the target col
+            )
+            batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
+        except Exception as e:
+            print(f"Error processing cluster_A={cluster_a_id}: {str(e)}")
+            continue
+
+    return batch
 
 os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
 
 
-def run_clustering_pipeline(ds, cfg: object):
-    """Runs the full 2-stage clustering pipeline using Ray."""
-    limit = cfg.get("ray_max_docs_limit", None)
-    if limit:
-         ds = ds.limit(limit)
-         print(f"Dataset limited to {limit} documents.")
+
+
+
+
+# def fit_predict(ds: ray.data.Dataset, n_clusters, max_docs, train_cpus):
+
+
+
+def stage1(ds: ray.data.Dataset, cfg: object):
     print("--- Stage 1 Starting ---")
     n_clusters_a = cfg.cluster_layout[0]
-    
-    
-    output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     
     
     print("Stage 1 model fitting task submitted.")
@@ -600,9 +633,8 @@ def run_clustering_pipeline(ds, cfg: object):
             num_cpus=cfg.stage1_train_cpus,
             resources={"TPU-v4-8-head": 1},
     ).remote(
-            cfg, sample_df, n_clusters_a, "Stage1", "stage1_train_kmeans_bs"
+            cfg, sample_df, n_clusters_a, "Stage1", cfg.stage1_train_kmeans_bs
     )
-    
     
     # Get the actual models from the reference
     vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
@@ -632,7 +664,12 @@ def run_clustering_pipeline(ds, cfg: object):
     )
     
     
-    print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
+    print("Stage 1 inference complete. Schema:", tagged_ds_A.schema(), "\nSample row after Stage 1:", tagged_ds_A.take(1), "\n--- Stage 1 Done ---")
+    """Runs the full 2-stage clustering pipeline using Ray."""
+    return tagged_ds_A
+
+def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
+    print("\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
     def _process_stage2_group(group_df: pd.DataFrame):
         return process_stage2_group(group_df, cfg=cfg)
@@ -659,44 +696,11 @@ def run_clustering_pipeline(ds, cfg: object):
     }
     stage2_models_dict_ref = ray.put(stage2_models_dict) # Put the whole dict in object store
     print(f"Stage 2 models references collected for {len(stage2_models_dict)} clusters.")
-    # print("Stage 2 Model Dict Sample:", dict(list(stage2_models_dict.items())[:2])) # Debug
     
     print("Running Stage 2 inference...")
-    def apply_stage2_batch(batch: pd.DataFrame) -> pd.DataFrame:
-        models_dict = ray.get(stage2_models_dict_ref) # Get dict {cluster_id: models_ref}
-        batch[CLUSTER_B_COL] = -1 # Initialize column
-        
-        # Process each cluster_A group within the batch
-        for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
-            models_ref = models_dict.get(cluster_a_id)
-            
-            # Skip if no models available for this cluster
-            if models_ref is None:
-                print(f"Warning: No models available for cluster_A={cluster_a_id}")
-                continue
-                
-            # Get the actual models from the reference
-            try:
-                vectorizer, kmeans = ray.get(models_ref)
-                
-                # Skip if any model is None
-                if vectorizer is None or kmeans is None:
-                    print(f"Warning: Missing model components for cluster_A={cluster_a_id}")
-                    continue
-                    
-                processed_group = apply_models_batch(
-                    group.copy(), # Pass copy to avoid modifying original slice
-                    vectorizer_ref=ray.put(vectorizer),
-                    kmeans_ref=ray.put(kmeans),
-                    cluster_col_name=CLUSTER_B_COL # Predict into the target col
-                )
-                batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
-            except Exception as e:
-                print(f"Error processing cluster_A={cluster_a_id}: {str(e)}")
-                continue
-
-        return batch
-
+    def apply_stage2_batch(batch: pd.DataFrame):
+        return _apply_stage2_batch(batch, stage2_models_dict_ref)
+    
     tagged_ds_B = tagged_ds_A.map_batches(
         apply_stage2_batch,
         batch_format="pandas",
@@ -707,19 +711,34 @@ def run_clustering_pipeline(ds, cfg: object):
     )
         
     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
+
+    return final_ds
+
+def stage2_new(ds: ray.data.Dataset, cfg: object):
+    print("--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
+
+
+def run_clustering_pipeline(ds, cfg: object):
+    output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
+    os.makedirs(output_base_path, exist_ok=True)
+    limit = cfg.get("ray_max_docs_limit", None)
+    if limit:
+         ds = ds.limit(limit)
+         print(f"Dataset limited to {limit} documents.")
+    
+    tagged_ds_A = stage1(ds, cfg)
+    final_ds = stage2(tagged_ds_A, cfg)
     
     print("Stage 2 inference complete. Schema:", final_ds.schema())
     print("Sample row after Stage 2:", final_ds.take(1)) # Debug
     print("--- Stage 2 Done ---")
 
-    print("--- Writing Final Output ---")
-    # Define output path based on config
+
 
     
-    # Create directory on the driver node as well
-    os.makedirs(output_base_path, exist_ok=True)
 
+    # Create directory on the driver node as well
     # Write to parquet, ideally partitioned by the cluster assignments
     # This creates directories like: .../cluster_A=0/cluster_B=0/cluster_C=0/file.parquet
     # Note: Partitioning requires columns to exist. Handle potential missing CLUSTER_C_COL if groups failed.
@@ -737,6 +756,75 @@ def run_clustering_pipeline(ds, cfg: object):
     
 from ml_collections import config_dict
 import glob
+
+
+
+
+config_str = """
+base_dir: "/mnt/gcs_bucket/ray_clustering_output"
+
+
+num_blocks: 1000
+ray_max_docs_limit: null
+
+similarity_config:
+  threshold: 0.85
+  num_perm: 128
+  ngram_size: 5
+  min_ngram_size: 2
+
+
+base_stage:
+  tfidf: 
+      train:
+      max_docs: 5000
+      n_components: 128
+      random_seed: 42
+      batch_size: 1024
+
+      inference:
+      cpus: 5
+      batch_size: 1024
+      concurrency: 100
+  kmeans:
+      max_docs: 5000
+      n_clusters: 10
+
+      train:
+      batch_size: 1024
+      iter_limit: 20
+
+      inference:
+      batch_size: 8192
+      num_cpus: 20
+      concurrency: 10
+
+stages:
+  - name: stage1
+    tfidf: 
+      train:
+        max_docs: 5000
+        n_components: 128
+        random_seed: 42
+        batch_size: 1024
+
+      inference:
+        cpus: 5
+        batch_size: 1024
+        concurrency: 100
+    kmeans:
+      max_docs: 5000
+      n_clusters: 10
+
+      train:
+        batch_size: 1024
+        iter_limit: 20
+
+      inference:
+        batch_size: 8192
+        num_cpus: 20
+        concurrency: 10
+"""
 def tfidf_minhash_ray(args):
 
     dummy_config = {
@@ -748,39 +836,26 @@ def tfidf_minhash_ray(args):
         "stage1_inf_batch_size": 1000, # Ray batch size for inference
         "stage1_train_cpus": 128, # Reduced from 70 to fit cluster capacity
         "stage2_train_kmeans_bs": 512,
-        "stage2_inf_kmeans_bs": 2048, # Needed if using JAX prediction
         "stage2_inf_batch_size": 1000,
         "stage2_train_cpus": 128, # Reduced from 70 to fit cluster capacity
-        "stage3_train_kmeans_bs": 256,
-        "stage3_inf_kmeans_bs": 1024, # Needed if using JAX prediction
-        "stage3_proc_cpus": 8, # Reduced from 30 to fit cluster capacity
-        "stage3_min_group_size": 50, # Min size for Stage 3 processing
-        "tfidf_batch_size": 500, # Default batch size if others not set
-        "stage3_dedup": True,
-        "similarity": args.threshold if args.threshold else 0.85,
-        "num_perm": args.num_perm if args.num_perm else 128,
-        "ngram_size": args.ngram_size if args.ngram_size else 5,
-        "min_ngram_size": args.min_ngram_size if args.min_ngram_size else 1,
         "ray_max_docs_limit": None # Limit total docs processed (for testing)
     }
     
-    cfg = config_dict.ConfigDict(dummy_config)
+    # cfg = config_dict.ConfigDict(dummy_config)
+    import yaml
+
+    with open("database_project/src/configs/base.yml") as f:
+        config_data = yaml.safe_load(f)
+        cfg = config_dict.ConfigDict(config_data)
+    cfg.args = args
 
     # --- Run Pipeline ---
     start_time = time.time()
     
-    # Prepare the input data
-    # If column name is not 'text', rename it
-    # if args.column and args.column != 'text':
-    #     df = df.withColumnRenamed(args.column, 'text')
+
     if args.limit_files is not None:
-        input_file = glob.glob(args.input_file)[:args.limit_files]
-    # Convert Spark DataFrame to Ray Dataset
-    print(f"Converting Spark DataFrame to Ray Dataset...")
-    # ray_df = ray.data.from_spark(df, parallelism=100)
-    
-    
-    ray_df = ray.data.read_json(input_file,override_num_blocks=1000)
+        input_file = glob.glob(args.input_file)[:args.limit_files]    
+    ray_df = ray.data.read_json(input_file, override_num_blocks=cfg.num_blocks)
     
     
     print(f"Ray Dataset created with {ray_df.count()} rows")
@@ -794,83 +869,6 @@ def tfidf_minhash_ray(args):
     # Return the output path where results are stored
     return f"{cfg.base_dir}/ray_output_final_clustered"
     
-def test_kmeans():
-    """Test the KMeans implementation with a simple example."""
-    print("Testing KMeans implementation...")
-    
-    # Generate sample data with clear clusters
-    np.random.seed(42)
-    n_samples = 1000
-    n_features = 10
-    n_clusters = 3
-    
-    # Create clear clusters
-    centers = np.random.randn(n_clusters, n_features) * 5  # Well-separated centers
-    
-    # Generate points around centers
-    X = np.vstack([
-        centers[i] + np.random.randn(n_samples // n_clusters, n_features)
-        for i in range(n_clusters)
-    ])
-    
-    # Shuffle the data
-    np.random.shuffle(X)
-    
-    # Test standard KMeans (without balanced clusters)
-    print("\nTesting standard KMeans...")
-    kmeans_standard = KMeans(n_clusters=n_clusters, balanced=False, random_state=42)
-    labels_standard = kmeans_standard.fit_predict(X)
-    
-    # Count points in each cluster
-    unique, counts = np.unique(labels_standard, return_counts=True)
-    cluster_counts = dict(zip(unique, counts))
-    print(f"Cluster distribution (standard): {cluster_counts}")
-    
-    # Test balanced KMeans
-    print("\nTesting balanced KMeans...")
-    kmeans_balanced = KMeans(n_clusters=n_clusters, balanced=True, random_state=42)
-    labels_balanced = kmeans_balanced.fit_predict(X)
-    
-    # Count points in each cluster
-    unique, counts = np.unique(labels_balanced, return_counts=True)
-    cluster_counts = dict(zip(unique, counts))
-    print(f"Cluster distribution (balanced): {cluster_counts}")
-    
-    # Test online learning
-    print("\nTesting online learning...")
-    kmeans_online = KMeans(n_clusters=n_clusters, random_state=42)
-    
-    # Split data into batches
-    batch_size = 200
-    n_batches = n_samples // batch_size
-    
-    for i in range(n_batches):
-        start_idx = i * batch_size
-        end_idx = min((i + 1) * batch_size, n_samples)
-        batch = X[start_idx:end_idx]
-        
-        # Fit batch
-        if i == 0:
-            kmeans_online.fit(batch)
-        else:
-            kmeans_online.fit(batch, online=True, iter_k=i)
-    
-    # Predict on full dataset
-    labels_online = kmeans_online.predict(X)
-    
-    # Count points in each cluster
-    unique, counts = np.unique(labels_online, return_counts=True)
-    cluster_counts = dict(zip(unique, counts))
-    print(f"Cluster distribution (online): {cluster_counts}")
-    
-    print("\nKMeans testing complete!")
-    
-    return kmeans_standard, kmeans_balanced, kmeans_online
-
-if __name__ == "__main__":
-    # Run KMeans test if this file is executed directly
-    test_kmeans()
-
 
 
 
