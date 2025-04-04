@@ -728,7 +728,7 @@ def fake_stage1(ds, cfg):
         assign_random_cluster,
         batch_format="pandas",
         batch_size=2048
-    )
+    ).materialize()
     
     return ds
     
