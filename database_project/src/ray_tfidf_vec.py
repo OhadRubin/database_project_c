@@ -729,8 +729,10 @@ def read_config(path):
 def run_clustering_pipeline(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     os.makedirs(output_base_path, exist_ok=True)
+    
+
         
-    partition_cols = [x.cluster_col_name for x in cfg.stages_list]
+    partition_cols = [x["cluster_col_name"] for x in cfg.stages_list]
     
     
     n_stages = len(cfg.stages_list)
