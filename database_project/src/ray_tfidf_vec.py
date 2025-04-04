@@ -679,6 +679,10 @@ class Actor:
     def fit_predict_remote(self, ds: ray.data.Dataset):
         return fit_predict(ds.materialize(), self.cfg).materialize()
 
+@ray.remote
+def fit_predict_remote(ds: ray.data.Dataset, cfg):
+    return fit_predict(ds.materialize(), cfg).materialize()
+
 def new_stage2(ds: ray.data.Dataset, cfg: object):
     stage1_clusters = cfg.cluster_spec[0]
     stage1_cluster_col_name = cfg.partition_cols[0]
@@ -689,7 +693,7 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
                        for cluster_id in range(stage1_clusters)]
     # pool = ActorPool([Actor.remote(cfg) for _ in range(3)])
     # ds_ref_list = pool.map(lambda a, v: a.fit_predict_remote.remote(v), stage1_datasets)
-    ds_ref_list = [Actor.remote(cfg).fit_predict_remote.remote(ds) for ds in stage1_datasets]
+    ds_ref_list = [fit_predict_remote.remote(ds) for ds in stage1_datasets]
     ds_list = ray.get(ds_ref_list)
     # ds_list = list(ds_ref_list)
     final_ds = ds_list[0]
