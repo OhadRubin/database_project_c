@@ -685,7 +685,8 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     
     og_ds = ds
     ds_ref_list = []
-    stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")  for cluster_id in range(stage1_clusters)]
+    stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}") 
+                       for cluster_id in range(stage1_clusters)]
     pool = ActorPool([Actor.remote(cfg) for _ in range(3)])
     ds_ref_list = pool.map(lambda a, v: a.fit_predict_remote.remote(v), stage1_datasets)
     
