@@ -83,13 +83,7 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
 
 import torch
 
-def reshape_for_jax(data1, data2, modules):
-    jax,jnp = modules
-    batch_size = data1.shape[0]
-    n_clusters = data2.shape[0]
-    data1 = data1.reshape([jax.local_device_count(),
-                           batch_size//jax.local_device_count(),-1])
-    return data1, data2, batch_size, n_clusters
+
 
 
 def torch_pairwise_distance(data1, data2):
@@ -216,31 +210,9 @@ class KMeans(object):
             iter_limit=0,
             online=False,
             iter_k=None,
-            modules=None
+            jax_pairwise_distance=None
     ):
-        jax,jnp = modules
-        def jax_pairwise_distance(data1, data2):
-            def _jax_pairwise_distance(data1, data2):
-                # Expand the data matrices to have an extra dimension.
-                A = jnp.expand_dims(data1, axis=1)
-                B = jnp.expand_dims(data2, axis=0)
 
-                # Compute the squared pairwise distances.
-                dis = (A - B) ** 2.0
-
-                # Sum the squared pairwise distances over the feature dimension.
-                dis = jnp.sum(dis, axis=-1)
-
-                # Squeeze the output to have shape (N, M)[].
-                dis = jnp.squeeze(dis)
-
-                return dis
-            dist_func = jax.pmap(_jax_pairwise_distance,in_axes=(0, None))
-            
-            data1, data2, *shape = reshape_for_jax(data1, data2, modules)
-            dis = dist_func(data1, data2)
-            dis = jax.device_get(dis).reshape(shape)
-            return dis
         if tqdm_flag:
             print(f'running k-means on {self.device}..')
         X = X.float()
@@ -323,17 +295,55 @@ def serialize_objectref_dict(objectref_dict):
 def deserialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
-def fit_kmeans(embeddings, kmeans_cfg, **kwargs):    
+
+def create_jax_pairwise_distance():
     import jax
     import jax.numpy as jnp
-    modules = (jax, jnp)
+    def reshape_for_jax(data1, data2):
+
+        batch_size = data1.shape[0]
+        n_clusters = data2.shape[0]
+        data1 = data1.reshape([jax.local_device_count(),
+                            batch_size//jax.local_device_count(),-1])
+        return data1, data2, batch_size, n_clusters
+    
+    def _jax_pairwise_distance(data1, data2):
+        # Expand the data matrices to have an extra dimension.
+        A = jnp.expand_dims(data1, axis=1)
+        B = jnp.expand_dims(data2, axis=0)
+
+        # Compute the squared pairwise distances.
+        dis = (A - B) ** 2.0
+
+        # Sum the squared pairwise distances over the feature dimension.
+        dis = jnp.sum(dis, axis=-1)
+
+        # Squeeze the output to have shape (N, M)[].
+        dis = jnp.squeeze(dis)
+
+        return dis
+    
+    dist_func = jax.pmap(_jax_pairwise_distance,in_axes=(0, None))
+    def jax_pairwise_distance(data1, data2):
+        
+        
+        data1, data2, *shape = reshape_for_jax(data1, data2)
+        dis = dist_func(data1, data2)
+        dis = jax.device_get(dis).reshape(shape)
+        return dis
+    return jax_pairwise_distance
+
+def fit_kmeans(embeddings, kmeans_cfg, **kwargs):    
+
+    jax_pairwise_distance = create_jax_pairwise_distance()
+    
     embeddings = DataLoader(embeddings, batch_size=kmeans_cfg.train.batch_size, drop_last=True)
     
     kmeans = KMeans(n_clusters=kmeans_cfg.n_clusters, balanced=True, **kwargs)
     with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
         for i,batch in enumerate(embeddings):
             pbar.update(batch.shape[0])
-            kmeans.fit(batch, iter_limit=kmeans_cfg.train.iter_limit, online=True, iter_k=i, modules=modules)
+            kmeans.fit(batch, iter_limit=kmeans_cfg.train.iter_limit, online=True, iter_k=i, jax_pairwise_distance=jax_pairwise_distance)
     return kmeans
 
 
