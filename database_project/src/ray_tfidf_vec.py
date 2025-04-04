@@ -687,9 +687,11 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     for cluster_id in range(stage1_clusters):
         ds = og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")
         new_ds = fit_predict_remote.remote(ds, cfg)
+        new_ds = ray.get(new_ds).materialize()
         ds_ref_list.append(new_ds)
         
     ds_list = ray.get(ds_ref_list)
+    ds_list = ds_ref_list
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
 
