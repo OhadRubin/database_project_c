@@ -659,8 +659,8 @@ def run_clustering_pipeline(ds, cfg: object):
     base_cfg.cluster_spec = cluster_spec
     base_cfg.partition_cols = partition_cols
     for stage, func in zip(cfg.stages_list,[
-        # stage1, 
-        fake_stage1,
+        stage1, 
+        # fake_stage1,
         new_stage2
         ]):
         stage_cfg = base_cfg.copy_and_resolve_references()
