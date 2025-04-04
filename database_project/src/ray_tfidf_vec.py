@@ -345,8 +345,8 @@ def fit_models_remote(
     cfg: object,
     ds: pd.DataFrame,
 ) -> Tuple[object, object]:
-    os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
-    time.sleep(10)
+    # os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
+    # time.sleep(10)
     sample_ds = ds.limit(cfg.max_docs)
     print(f"Collecting sample...")
     sample_df = sample_ds.to_pandas()
@@ -385,8 +385,8 @@ class KMeansInferenceModel:
         ):
         _, kmeans = ray.get(kmeans_ref)
         self.kmeans = kmeans
-        os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
-        time.sleep(10)
+        # os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
+        # time.sleep(10)
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=cfg.kmeans.inference.batch_size)
         self.cluster_col_name = cfg.cluster_col_name
 
