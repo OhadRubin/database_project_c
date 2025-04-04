@@ -689,13 +689,10 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
         new_ds = fit_predict_remote.remote(ds, cfg)
         ds_ref_list.append(new_ds)
         
-    final_ds = None
-    for ds_ref in ds_ref_list:
-        if final_ds is not None:
-            ds = ray.get(ds_ref)
-            final_ds = final_ds.union(ds)
-        else:
-            final_ds = ray.get(ds_ref)
+    ds_list = ray.get(ds_ref_list)
+    final_ds = ds_list[0]
+    final_ds = final_ds.union(*ds_list[1:])
+
 
 
     return final_ds.materialize()
