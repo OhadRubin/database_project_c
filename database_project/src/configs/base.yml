@@ -34,5 +34,10 @@ stages_list:
   - name: stage2
     pretty_name: "Stage 2"
     cluster_col_name: cluster_B
+    tfidf:
+      inference:
+        concurrency: 30
     kmeans:
       n_clusters: 10
+      inference:
+        concurrency: 2
