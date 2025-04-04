@@ -667,17 +667,10 @@ from ray.util.queue import Queue, Empty
 
 
 
-from ray.util import ActorPool
 
 
 
-@ray.remote
-class Actor:
-    def __init__(self, cfg: object):
-        self.cfg = cfg
-    
-    def fit_predict_remote(self, ds: ray.data.Dataset):
-        return fit_predict(ds.materialize(), self.cfg).materialize()
+
 
 @ray.remote
 def fit_predict_remote(ds: ray.data.Dataset, cfg):
@@ -691,11 +684,9 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     ds_ref_list = []
     stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}") 
                        for cluster_id in range(stage1_clusters)]
-    # pool = ActorPool([Actor.remote(cfg) for _ in range(3)])
-    # ds_ref_list = pool.map(lambda a, v: a.fit_predict_remote.remote(v), stage1_datasets)
+
     ds_ref_list = [fit_predict_remote.remote(ds, cfg) for ds in stage1_datasets]
     ds_list = ray.get(ds_ref_list)
-    # ds_list = list(ds_ref_list)
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
 
@@ -759,8 +750,8 @@ def run_clustering_pipeline(ds, cfg: object):
     base_cfg.cluster_spec = cluster_spec
     base_cfg.partition_cols = partition_cols
     for stage, func in zip(cfg.stages_list,[
-        stage1, 
-        # fake_stage1,
+        # stage1, 
+        fake_stage1,
         new_stage2
         ]):
         stage_cfg = base_cfg.copy_and_resolve_references()
