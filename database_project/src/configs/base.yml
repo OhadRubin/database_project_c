@@ -14,7 +14,7 @@ base_stage:
       inference:
         num_cpus: 5
         batch_size: 1024
-        concurrency: 100
+        concurrency: 200
   kmeans:
       train:
         batch_size: 2048
