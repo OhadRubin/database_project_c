@@ -12,13 +12,13 @@ base_stage:
         num_cpus: 210
 
       inference:
-        cpus: 5
+        num_cpus: 5
         batch_size: 1024
         concurrency: 100
   kmeans:
       train:
-        batch_size: 1024
-        iter_limit: 20
+        batch_size: 2048
+        iter_limit: 5
 
       inference:
         batch_size: 8192
