@@ -403,7 +403,8 @@ class KMeans(object):
             return cluster_assignments.cpu()
 
 
-def get_sklearn_feature_pipeline(n_components, random_seed):
+def get_sklearn_feature_pipeline(tfidf_cfg):
+    n_components, random_seed = tfidf_cfg.n_components, tfidf_cfg.random_seed
     stop_words = list(ENGLISH_STOP_WORDS.union(["#NUMBER"]))
     vectorizer = Pipeline([('tfidf', NumberNormalizingVectorizer(stop_words=stop_words)),
                             ('svd', TruncatedSVD(n_components=n_components,random_state=random_seed)),
@@ -421,22 +422,21 @@ def serialize_objectref_dict(objectref_dict):
 def deserialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
-def fit_kmeans(embeddings, n_clusters, batch_size, **kwargs):
+def fit_kmeans(embeddings, kmeans_cfg, **kwargs):    
+    embeddings = DataLoader(embeddings, batch_size=kmeans_cfg.train.batch_size, drop_last=True)
     
-    embeddings = DataLoader(embeddings, batch_size=batch_size, drop_last=True)
-    
-    kmeans = KMeans(n_clusters=n_clusters, balanced=True, **kwargs)
+    kmeans = KMeans(n_clusters=kmeans_cfg.n_clusters, balanced=True, **kwargs)
     with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
         for i,batch in enumerate(embeddings):
             pbar.update(batch.shape[0])
-            kmeans.fit(batch, iter_limit=20, online=True, iter_k=i)
+            kmeans.fit(batch, iter_limit=kmeans_cfg.train.iter_limit, online=True, iter_k=i)
     return kmeans
 
 
 # --- Constants ---
-CLUSTER_A_COL = 'cluster_A'
-CLUSTER_B_COL = 'cluster_B'
-TEMP_ID_COL = 'temp_doc_id'
+# CLUSTER_A_COL = 'cluster_A'
+# CLUSTER_B_COL = 'cluster_B'
+# TEMP_ID_COL = 'temp_doc_id'
 
 
 
@@ -444,9 +444,6 @@ TEMP_ID_COL = 'temp_doc_id'
 def fit_models_remote(
     cfg: object,
     sample_data: pd.DataFrame,
-    n_clusters: int,
-    stage_label: str, # e.g., "Stage1", "Stage2_GroupX", etc.
-    kmeans_train_batch_size: str, # e.g., "stage1_train_kmeans_bs"
 ) -> Tuple[object, object]:
     """Fits vectorizer and KMeans on sample data.
     
@@ -465,17 +462,14 @@ def fit_models_remote(
         pointing to this tuple.
     """
 
-
+    stage_label = cfg.cluster_col_name
     texts = sample_data["text"].tolist()
     print(f"[{stage_label}] Fitting vectorizer on {len(texts)} samples...")
-    vectorizer = get_sklearn_feature_pipeline(n_components=128, random_seed=42)
+    vectorizer = get_sklearn_feature_pipeline(cfg.tfidf)
     embeddings = vectorizer.fit_transform(texts)
     print(f"[{stage_label}] Vectorizer fitting done. Embedding shape: {embeddings.shape}")
-
-    print(f"[{stage_label}] Fitting K-means with {n_clusters} clusters...")
-    # kmeans_batch_size_config = getattr(cfg, kmeans_train_batch_size_key)
-        
-    kmeans = fit_kmeans(embeddings, n_clusters, batch_size=kmeans_train_batch_size) # Pass computed BS if needed
+    print(f"[{stage_label}] Fitting K-means with {cfg.kmeans.n_clusters} clusters...")
+    kmeans = fit_kmeans(embeddings,  cfg.kmeans)
     print(f"[{stage_label}] K-means fitting done.")
 
     return vectorizer, kmeans
@@ -499,11 +493,11 @@ class TFIDFInferenceModel:
 class KMeansInferenceModel:
     def __init__(self,
         kmeans_ref: ray.ObjectRef,
-        cluster_col_name: str
+        cfg: str
         ):
         self.kmeans = ray.get(kmeans_ref)
-        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=8192)
-        self.cluster_col_name = cluster_col_name
+        self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=cfg.kmeans.inference.batch_size)
+        self.cluster_col_name = cfg.cluster_col_name
 
     def __call__(self, batch: pd.DataFrame):
         embeddings = np.array([emb for emb in batch["embeddings"]])
@@ -511,97 +505,98 @@ class KMeansInferenceModel:
         batch.drop(columns=["embeddings"], inplace=True)
         return batch
 
-def apply_models_batch(
-    batch: pd.DataFrame,
-    vectorizer_ref: ray.ObjectRef,
-    kmeans_ref: ray.ObjectRef,
-    # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
-    cluster_col_name: str
-) -> pd.DataFrame:
-    """Applies vectorizer (transform) and kmeans (predict) to a batch."""
-    if batch.empty:
-        return batch
-    vectorizer = ray.get(vectorizer_ref) # Retrieve models from Object Store (Ray caches locally after first get)
-    kmeans = ray.get(kmeans_ref)
+# def apply_models_batch(
+#     batch: pd.DataFrame,
+#     vectorizer_ref: ray.ObjectRef,
+#     kmeans_ref: ray.ObjectRef,
+#     # kmeans_batch_size: int, # Needed if using compile_nearest_cluster
+#     cluster_col_name: str
+# ) -> pd.DataFrame:
+#     """Applies vectorizer (transform) and kmeans (predict) to a batch."""
+#     if batch.empty:
+#         return batch
+#     vectorizer = ray.get(vectorizer_ref) # Retrieve models from Object Store (Ray caches locally after first get)
+#     kmeans = ray.get(kmeans_ref)
     
     
-    tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=8192)
-    texts = batch["text"].tolist()
-    # 1. Vectorize (Transform)
-    embeddings = vectorizer.transform(texts)
-    # 2. Predict Cluster
-    batch[cluster_col_name] = tagging_func(embeddings)
+#     tagging_func = compile_nearest_cluster(kmeans, kmeans_batch_size=8192)
+#     texts = batch["text"].tolist()
+#     # 1. Vectorize (Transform)
+#     embeddings = vectorizer.transform(texts)
+#     # 2. Predict Cluster
+#     batch[cluster_col_name] = tagging_func(embeddings)
 
 
-    return batch
+#     return batch
 
 
-def process_stage2_group(
-    group_df: pd.DataFrame,
-    cfg: object,
-) -> Tuple[int, ray.ObjectRef]:
-    if group_df.empty:
-        assert False
-    n_clusters_b = cfg.cluster_layout[1]
-    max_docs_sample = cfg.get("stage2_max_docs_sample", cfg.max_docs)
-
-    cluster_a_id = group_df[CLUSTER_A_COL].iloc[0]
-    stage_label = f"Stage2_A={cluster_a_id}"
-    sample_df = group_df.sample(n=min(len(group_df), max_docs_sample), random_state=42)
-
-    # Use the generic fitting task
-    models_ref = fit_models_remote.remote(
-        cfg=cfg,
-        sample_data=sample_df,
-        n_clusters=n_clusters_b,
-        stage_label=stage_label,
-        kmeans_train_batch_size=cfg.stage2_train_kmeans_bs
-    )
-    # Don't try to unpack the Ray object reference
+# def process_stage2_group(
+#     group_df: pd.DataFrame,
+#     cfg: object,
+# ) -> Tuple[int, ray.ObjectRef]:
+#     if group_df.empty:
+#         assert False
+#     n_clusters_b = cfg.stages.stage2.kmeans.n_clusters
+#     max_docs_sample = cfg.stages[1].kmeans.max_docs
     
-    print(f"[{stage_label}] Model fitting tasks submitted.")
-    # We return the cluster_id and the reference to the models
-    result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref}
-    result = serialize_objectref_dict(result)
-    return pd.DataFrame([result])
 
+#     cluster_a_id = group_df[CLUSTER_A_COL].iloc[0]
+#     stage_label = f"Stage2_A={cluster_a_id}"
+#     sample_df = group_df.sample(n=min(len(group_df), max_docs_sample), random_state=42)
 
-
-
-
-def _apply_stage2_batch(batch: pd.DataFrame, stage2_models_dict_ref:object) -> pd.DataFrame:
-    models_dict = ray.get(stage2_models_dict_ref) # Get dict {cluster_id: models_ref}
-    batch[CLUSTER_B_COL] = -1 # Initialize column
+#     # Use the generic fitting task
+#     models_ref = fit_models_remote.remote(
+#         cfg=cfg,
+#         sample_data=sample_df,
+#         n_clusters=n_clusters_b,
+#         stage_label=stage_label,
+#         kmeans_train_batch_size=cfg.stage2_train_kmeans_bs
+#     )
+#     # Don't try to unpack the Ray object reference
     
-    # Process each cluster_A group within the batch
-    for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
-        models_ref = models_dict.get(cluster_a_id)
+#     print(f"[{stage_label}] Model fitting tasks submitted.")
+#     # We return the cluster_id and the reference to the models
+#     result =  {"cluster_a_id":cluster_a_id, "models_ref": models_ref}
+#     result = serialize_objectref_dict(result)
+#     return pd.DataFrame([result])
+
+
+
+
+
+# def _apply_stage2_batch(batch: pd.DataFrame, stage2_models_dict_ref:object) -> pd.DataFrame:
+#     models_dict = ray.get(stage2_models_dict_ref) # Get dict {cluster_id: models_ref}
+#     batch[CLUSTER_B_COL] = -1 # Initialize column
+    
+#     # Process each cluster_A group within the batch
+#     for cluster_a_id, group in batch.groupby(CLUSTER_A_COL):
+#         models_ref = models_dict.get(cluster_a_id)
         
-        # Skip if no models available for this cluster
-        if models_ref is None:
-            print(f"Warning: No models available for cluster_A={cluster_a_id}")
-            continue
+#         # Skip if no models available for this cluster
+#         if models_ref is None:
+#             print(f"Warning: No models available for cluster_A={cluster_a_id}")
+#             continue
             
-        try:
-            vectorizer, kmeans = ray.get(models_ref)
+#         try:
+#             vectorizer, kmeans = ray.get(models_ref)
             
-            # Skip if any model is None
-            if vectorizer is None or kmeans is None:
-                print(f"Warning: Missing model components for cluster_A={cluster_a_id}")
-                continue
+#             # Skip if any model is None
+#             if vectorizer is None or kmeans is None:
+#                 print(f"Warning: Missing model components for cluster_A={cluster_a_id}")
+#                 continue
                 
-            processed_group = apply_models_batch(
-                group.copy(), # Pass copy to avoid modifying original slice
-                vectorizer_ref=ray.put(vectorizer),
-                kmeans_ref=ray.put(kmeans),
-                cluster_col_name=CLUSTER_B_COL # Predict into the target col
-            )
-            batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
-        except Exception as e:
-            print(f"Error processing cluster_A={cluster_a_id}: {str(e)}")
-            continue
+#             processed_group = apply_models_batch(
+#                 group.copy(), # Pass copy to avoid modifying original slice
+#                 vectorizer_ref=ray.put(vectorizer),
+#                 kmeans_ref=ray.put(kmeans),
+#                 cluster_col_name=CLUSTER_B_COL # Predict into the target col
+#             )
+#             batch.loc[group.index, CLUSTER_B_COL] = processed_group[CLUSTER_B_COL]
+#         except Exception as e:
+#             print(f"Error processing cluster_A={cluster_a_id}: {str(e)}")
+#             continue
 
-    return batch
+#     return batch
 
 os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", exist_ok=True)
 
@@ -616,10 +611,7 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 
 def stage1(ds: ray.data.Dataset, cfg: object):
     print("--- Stage 1 Starting ---")
-    n_clusters_a = cfg.cluster_layout[0]
-    
-    
-    print("Stage 1 model fitting task submitted.")
+        
     # sample_ds = ds.random_sample(fraction=sample_fraction)
     sample_ds = ds.limit(cfg.max_docs)
     print(f"Collecting sample...")
@@ -628,12 +620,12 @@ def stage1(ds: ray.data.Dataset, cfg: object):
 
 
     
-
+    # ray.remote
     models_s1_ref = fit_models_remote.options(
-            num_cpus=cfg.stage1_train_cpus,
+            num_cpus=cfg.tfidf.train.num_cpus,
             resources={"TPU-v4-8-head": 1},
     ).remote(
-            cfg, sample_df, n_clusters_a, "Stage1", cfg.stage1_train_kmeans_bs
+            cfg, sample_df
     )
     
     # Get the actual models from the reference
@@ -660,7 +652,7 @@ def stage1(ds: ray.data.Dataset, cfg: object):
         num_cpus=100,
         concurrency=10,
         fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref,
-                               "cluster_col_name": CLUSTER_A_COL},
+                               "cluster_col_name": cfg.cluster_col_name},
     )
     
     
@@ -668,73 +660,95 @@ def stage1(ds: ray.data.Dataset, cfg: object):
     """Runs the full 2-stage clustering pipeline using Ray."""
     return tagged_ds_A
 
-def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
-    print("\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
+# def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
+#     print("\n--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
-    def _process_stage2_group(group_df: pd.DataFrame):
-        return process_stage2_group(group_df, cfg=cfg)
+#     def _process_stage2_group(group_df: pd.DataFrame):
+#         return process_stage2_group(group_df, cfg=cfg)
     
 
-    stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
-        _process_stage2_group,
-        num_cpus=cfg.stage2_train_cpus,
-        batch_format="pandas",
-        resources={"TPU-v4-8-head": 1},
-    )
+#     stage2_model_results_ds = tagged_ds_A.groupby(CLUSTER_A_COL).map_groups(
+#         _process_stage2_group,
+#         num_cpus=cfg.stage2_train_cpus,
+#         batch_format="pandas",
+#         resources={"TPU-v4-8-head": 1},
+#     )
 
-    # Collect the model references (assume num stage 1 clusters is manageable)
-    print("Collecting Stage 2 model references...")
-    stage2_model_results = stage2_model_results_ds.take_all() # List of dicts
-    print("Finished collecting Stage 2 model references...")
+#     # Collect the model references (assume num stage 1 clusters is manageable)
+#     print("Collecting Stage 2 model references...")
+#     stage2_model_results = stage2_model_results_ds.take_all() # List of dicts
+#     print("Finished collecting Stage 2 model references...")
     
     
-    stage2_model_results = [deserialize_objectref_dict(item) for item in stage2_model_results]
+#     stage2_model_results = [deserialize_objectref_dict(item) for item in stage2_model_results]
         
-    stage2_models_dict = {
-        item['cluster_a_id']: item['models_ref']
-        for item in stage2_model_results
-    }
-    stage2_models_dict_ref = ray.put(stage2_models_dict) # Put the whole dict in object store
-    print(f"Stage 2 models references collected for {len(stage2_models_dict)} clusters.")
+#     stage2_models_dict = {
+#         item['cluster_a_id']: item['models_ref']
+#         for item in stage2_model_results
+#     }
+#     stage2_models_dict_ref = ray.put(stage2_models_dict) # Put the whole dict in object store
+#     print(f"Stage 2 models references collected for {len(stage2_models_dict)} clusters.")
     
-    print("Running Stage 2 inference...")
-    def apply_stage2_batch(batch: pd.DataFrame):
-        return _apply_stage2_batch(batch, stage2_models_dict_ref)
+#     print("Running Stage 2 inference...")
+#     def apply_stage2_batch(batch: pd.DataFrame):
+#         return _apply_stage2_batch(batch, stage2_models_dict_ref)
     
-    tagged_ds_B = tagged_ds_A.map_batches(
-        apply_stage2_batch,
-        batch_format="pandas",
-        batch_size=cfg.stage2_inf_batch_size,
-        resources={"TPU-v4-8-head": 1},
-        concurrency=10,
-        num_cpus=210,
-    )
+#     tagged_ds_B = tagged_ds_A.map_batches(
+#         apply_stage2_batch,
+#         batch_format="pandas",
+#         batch_size=cfg.stage2_inf_batch_size,
+#         resources={"TPU-v4-8-head": 1},
+#         concurrency=10,
+#         num_cpus=210,
+#     )
         
-    final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL]).materialize()
+#     final_ds = tagged_ds_B.sort([CLUSTER_A_COL, CLUSTER_B_COL])
+#     print("Stage 2 inference complete. Schema:", final_ds.schema())
+#     print("Sample row after Stage 2:", final_ds.take(1)) # Debug
+#     print("--- Stage 2 Done ---")
+#     return final_ds
 
-    return final_ds
-
-def stage2_new(ds: ray.data.Dataset, cfg: object):
-    print("--- Stage 2 Starting ---\nTraining Stage 2 models (one per Stage 1 cluster)...")
     
+def stage2(ds: ray.data.Dataset, cfg: object):
+    pass
+
+
+from ml_collections import config_dict
+import glob
+import yaml
+
+
+
+def read_config(path):
+    with open(path) as f:
+        config_data = yaml.safe_load(f)
+        cfg = config_dict.ConfigDict(config_data)
+    return cfg
 
 
 def run_clustering_pipeline(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     os.makedirs(output_base_path, exist_ok=True)
+        
+    partition_cols = [x.cluster_col_name for x in cfg.stages_list]
+    
+    
+    n_stages = len(cfg.stages_list)
     limit = cfg.get("ray_max_docs_limit", None)
     if limit:
          ds = ds.limit(limit)
          print(f"Dataset limited to {limit} documents.")
     
-    tagged_ds_A = stage1(ds, cfg)
-    final_ds = stage2(tagged_ds_A, cfg)
     
-    print("Stage 2 inference complete. Schema:", final_ds.schema())
-    print("Sample row after Stage 2:", final_ds.take(1)) # Debug
-    print("--- Stage 2 Done ---")
-
-
+    base_cfg = config_dict.ConfigDict(cfg.base_stage)
+    
+    for stage, func in zip(cfg.stages_list,[stage1, stage2]):
+        stage_cfg = base_cfg.copy_and_resolve_references()
+        stage_cfg.update(stage)
+        ds = func(ds, stage_cfg)
+    
+    final_ds = ds.materialize()
+    
 
     
 
@@ -748,83 +762,15 @@ def run_clustering_pipeline(ds, cfg: object):
         output_base_path,
         # Ray automatically handles partitioning based on directory structure
         # partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL, CLUSTER_C_COL] # Specify if needed explicitly
-        partition_cols=[CLUSTER_A_COL, CLUSTER_B_COL], # Specify if needed explicitly
+        partition_cols=partition_cols, # Specify if needed explicitly
         # min_rows_per_file=10000,
     )
     print("--- Pipeline Finished ---")
 
     
-from ml_collections import config_dict
-import glob
 
 
 
-
-config_str = """
-base_dir: "/mnt/gcs_bucket/ray_clustering_output"
-
-
-num_blocks: 1000
-ray_max_docs_limit: null
-
-similarity_config:
-  threshold: 0.85
-  num_perm: 128
-  ngram_size: 5
-  min_ngram_size: 2
-
-
-base_stage:
-  tfidf: 
-      train:
-      max_docs: 5000
-      n_components: 128
-      random_seed: 42
-      batch_size: 1024
-
-      inference:
-      cpus: 5
-      batch_size: 1024
-      concurrency: 100
-  kmeans:
-      max_docs: 5000
-      n_clusters: 10
-
-      train:
-      batch_size: 1024
-      iter_limit: 20
-
-      inference:
-      batch_size: 8192
-      num_cpus: 20
-      concurrency: 10
-
-stages:
-  - name: stage1
-    tfidf: 
-      train:
-        max_docs: 5000
-        n_components: 128
-        random_seed: 42
-        batch_size: 1024
-
-      inference:
-        cpus: 5
-        batch_size: 1024
-        concurrency: 100
-    kmeans:
-      max_docs: 5000
-      n_clusters: 10
-
-      train:
-        batch_size: 1024
-        iter_limit: 20
-
-      inference:
-        batch_size: 8192
-        num_cpus: 20
-        concurrency: 10
-"""
 def tfidf_minhash_ray(args):
 
     dummy_config = {
@@ -842,12 +788,11 @@ def tfidf_minhash_ray(args):
     }
     
     # cfg = config_dict.ConfigDict(dummy_config)
-    import yaml
 
-    with open("database_project/src/configs/base.yml") as f:
-        config_data = yaml.safe_load(f)
-        cfg = config_dict.ConfigDict(config_data)
+    cfg = read_config("database_project/src/configs/base.yml")
     cfg.args = args
+
+
 
     # --- Run Pipeline ---
     start_time = time.time()
