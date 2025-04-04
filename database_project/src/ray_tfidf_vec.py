@@ -670,7 +670,7 @@ def run_clustering_pipeline(ds, cfg: object):
     
     final_ds = ds.materialize()
     
-    final_ds:ray.data.Dataset = final_ds.repartition(cfg.num_blocks)
+    final_ds:ray.data.Dataset = final_ds.repartition(40)
     
     print(f"Final dataset successfully written to {output_base_path}")
     final_ds.write_parquet(
