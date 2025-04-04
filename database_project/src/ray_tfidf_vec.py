@@ -64,9 +64,9 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
     n_local_devices = jax.local_device_count()
     codebook = np.array(kmeans.cluster_centers)
     codebook = jax.device_put(codebook)
-    
+    nearest_cluster_p = jax.pmap(_nearest_cluster, in_axes=(0, None))
     def nearest_cluster_bound(element):
-        return jax.pmap(_nearest_cluster,in_axes=(0, None))(element, codebook)
+        return nearest_cluster_p(element, codebook)
     
     nearest_cluster_padded = pad_shard_unpad(nearest_cluster_bound,
                                              static_return=False,static_argnums=())
