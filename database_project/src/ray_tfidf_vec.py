@@ -733,9 +733,6 @@ def run_clustering_pipeline(ds, cfg: object):
 
         
     partition_cols = [x["cluster_col_name"] for x in cfg.stages_list]
-    
-    
-    n_stages = len(cfg.stages_list)
     limit = cfg.get("ray_max_docs_limit", None)
     if limit:
          ds = ds.limit(limit)
