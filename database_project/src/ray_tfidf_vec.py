@@ -690,7 +690,6 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     ds_ref_list = pool.map(Actor.fit_predict_remote, stage1_datasets)
     
     ds_list = list(ds_ref_list)
-    ds_list = ds_ref_list
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
 
