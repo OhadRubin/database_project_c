@@ -3,7 +3,7 @@ ray_max_docs_limit: null
 base_dir: /mnt/gcs_bucket/ray_clustering_output
 num_blocks: 1000
 base_stage:
-  max_docs: 50000
+  max_docs: 5000
   tfidf: 
       train:
         n_components: 128
@@ -27,9 +27,12 @@ base_stage:
 
 stages_list:
   - name: stage1
+    pretty_name: "Stage 1"
     cluster_col_name: cluster_A
     kmeans:
       n_clusters: 10
-  # - name: stage2
-  #   kmeans:
-  #     n_clusters: 10
+  - name: stage2
+    pretty_name: "Stage 2"
+    cluster_col_name: cluster_B
+    kmeans:
+      n_clusters: 10
