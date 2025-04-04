@@ -404,7 +404,7 @@ class KMeans(object):
 
 
 def get_sklearn_feature_pipeline(tfidf_cfg):
-    n_components, random_seed = tfidf_cfg.n_components, tfidf_cfg.random_seed
+    n_components, random_seed = tfidf_cfg.train.n_components, tfidf_cfg.train.random_seed
     stop_words = list(ENGLISH_STOP_WORDS.union(["#NUMBER"]))
     vectorizer = Pipeline([('tfidf', NumberNormalizingVectorizer(stop_words=stop_words)),
                             ('svd', TruncatedSVD(n_components=n_components,random_state=random_seed)),
