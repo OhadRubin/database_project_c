@@ -18,7 +18,7 @@ base_stage:
   kmeans:
       train:
         batch_size: 2048
-        iter_limit: 20
+        iter_limit: 5
 
       inference:
         batch_size: 8192
