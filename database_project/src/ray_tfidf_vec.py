@@ -690,7 +690,7 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
         new_ds = ray.get(new_ds).materialize()
         ds_ref_list.append(new_ds)
         
-    ds_list = ray.get(ds_ref_list)
+    # ds_list = ray.get(ds_ref_list)
     ds_list = ds_ref_list
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
