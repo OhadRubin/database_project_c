@@ -11,7 +11,6 @@ import time
 import os
 from typing import List, Dict, Tuple, Any
 from sklearn.pipeline import Pipeline
-from sklearn.cluster import KMeans as SklearnKMeans, k_means
 import os
 import numpy as np
 import pandas as pd # Used for type hints, not core logic
@@ -25,7 +24,6 @@ from typing import Dict, Any, Iterator, List, Tuple, Optional, Set
 from sklearn.decomposition import TruncatedSVD
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import Normalizer
-# Import Spark ML components
 
 import socket
 from sklearn.feature_extraction import text
@@ -38,74 +36,6 @@ warnings.filterwarnings('ignore', message="Your stop_words may be inconsistent w
 
 import ray
 
-# Try to import JAX for faster distance calculations
-try:
-    import jax
-    import jax.numpy as jnp
-    HAS_JAX = True
-except ImportError:
-    HAS_JAX = False
-    warnings.warn("JAX not found, using NumPy for distance calculations instead (slower).")
-
-
-def jax_pairwise_distance(data1, data2):
-    """Compute pairwise Euclidean distances between two sets of points.
-    
-    If JAX is available, computes distances using JAX for better performance.
-    Otherwise, falls back to NumPy implementation.
-    
-    Args:
-        data1: First set of points, shape (m, d)
-        data2: Second set of points, shape (n, d)
-        
-    Returns:
-        Distance matrix of shape (m, n)
-    """
-    if HAS_JAX:
-        return _jax_pairwise_distance_impl(data1, data2)
-    else:
-        return _numpy_pairwise_distance_impl(data1, data2)
-
-
-def _jax_pairwise_distance_impl(data1, data2):
-    """JAX implementation of pairwise Euclidean distance calculation."""
-    # Convert to jax arrays if they aren't already
-    x1 = jnp.array(data1)
-    x2 = jnp.array(data2)
-    
-    # Compute squared norms of each point
-    x1_norm = jnp.sum(x1**2, axis=1)
-    x2_norm = jnp.sum(x2**2, axis=1)
-    
-    # Compute the distance matrix using the formula:
-    # ||x - y||^2 = ||x||^2 + ||y||^2 - 2 * x.dot(y)
-    x1_x2 = jnp.dot(x1, x2.T)
-    dist_mat = x1_norm[:, jnp.newaxis] + x2_norm[jnp.newaxis, :] - 2.0 * x1_x2
-    
-    # To avoid numerical issues, enforce non-negative distances
-    dist_mat = jnp.maximum(dist_mat, 0.0)
-    
-    # Return Euclidean distance (square root of squared distances)
-    return jnp.sqrt(dist_mat)
-
-
-def _numpy_pairwise_distance_impl(data1, data2):
-    """NumPy implementation of pairwise Euclidean distance calculation."""
-    # Ensure inputs are numpy arrays
-    x1 = np.asarray(data1)
-    x2 = np.asarray(data2)
-    
-    # Compute squared norms
-    x1_norm = np.sum(x1**2, axis=1)
-    x2_norm = np.sum(x2**2, axis=1)
-    
-    # Compute distances
-    x1_x2 = np.dot(x1, x2.T)
-    dist_mat = x1_norm[:, np.newaxis] + x2_norm[np.newaxis, :] - 2.0 * x1_x2
-    
-    # Enforce non-negative distances and take square root
-    dist_mat = np.maximum(dist_mat, 0.0)
-    return np.sqrt(dist_mat)
 
 
 def number_normalizer(tokens):
@@ -121,17 +51,19 @@ class NumberNormalizingVectorizer(TfidfVectorizer):
 import torch
 
 
-from flax.jax_utils import pad_shard_unpad    
 
-def _nearest_cluster(data, clusters):
-    data = jnp.expand_dims(data, axis=1)
-    clusters = jnp.expand_dims(clusters, axis=0)
-    dis = (data - clusters) ** 2.0
-    dis = jnp.sum(dis, axis=-1)
-    dis = jnp.squeeze(dis)
-    return dis.argmin(axis=1)
 
 def compile_nearest_cluster(kmeans, kmeans_batch_size):
+    from flax.jax_utils import pad_shard_unpad
+    import jax
+    import jax.numpy as jnp    
+    def _nearest_cluster(data, clusters):
+        data = jnp.expand_dims(data, axis=1)
+        clusters = jnp.expand_dims(clusters, axis=0)
+        dis = (data - clusters) ** 2.0
+        dis = jnp.sum(dis, axis=-1)
+        dis = jnp.squeeze(dis)
+        return dis.argmin(axis=1)
     n_local_devices = jax.local_device_count()
     codebook = np.array(kmeans.cluster_centers)
     codebook = jax.device_put(codebook)
@@ -151,25 +83,11 @@ def compile_nearest_cluster(kmeans, kmeans_batch_size):
 
 
 
-def _jax_pairwise_distance(data1, data2):
-    # Expand the data matrices to have an extra dimension.
-    A = jnp.expand_dims(data1, axis=1)
-    B = jnp.expand_dims(data2, axis=0)
-
-    # Compute the squared pairwise distances.
-    dis = (A - B) ** 2.0
-
-    # Sum the squared pairwise distances over the feature dimension.
-    dis = jnp.sum(dis, axis=-1)
-
-    # Squeeze the output to have shape (N, M)[].
-    dis = jnp.squeeze(dis)
-
-    return dis
 
 import torch
 
-def reshape_for_jax(data1, data2):
+def reshape_for_jax(data1, data2, modules):
+    jax,jnp = modules
     batch_size = data1.shape[0]
     n_clusters = data2.shape[0]
     data1 = data1.reshape([jax.local_device_count(),
@@ -186,13 +104,6 @@ def torch_pairwise_distance(data1, data2):
     return torch.argmin(dis, dim=1)
 
 
-def jax_pairwise_distance(data1, data2):
-    dist_func = jax.pmap(_jax_pairwise_distance,in_axes=(0, None))
-    
-    data1, data2, *shape = reshape_for_jax(data1, data2)
-    dis = dist_func(data1, data2)
-    dis = jax.device_get(dis).reshape(shape)
-    return dis
 
 
 def np_pairwise_distance(data1, data2):
@@ -233,6 +144,7 @@ def auction_lap(job_and_worker_to_score, return_token_to_worker=True):
     while True:
         top_values, top_index = value.topk(jobs_per_worker + 1, dim=1)
         # Each worker bids the difference in value between that job and the k+1th job
+
         bid_increments = top_values[:,:-1] - top_values[:,-1:]  + eps
         assert bid_increments.size() == (num_workers, jobs_per_worker)
         bids.zero_()
@@ -281,7 +193,8 @@ class KMeans(object):
         self.device = device
         self.balanced = balanced
         self.use_jax = use_jax
-    
+        
+
     @classmethod
     def load(cls, path_to_file):
         with open(path_to_file, 'rb') as f:
@@ -305,8 +218,32 @@ class KMeans(object):
             tqdm_flag=True,
             iter_limit=0,
             online=False,
-            iter_k=None
+            iter_k=None,
+            modules=None
     ):
+        jax,jnp = modules
+        def jax_pairwise_distance(data1, data2):
+            def _jax_pairwise_distance(data1, data2):
+                # Expand the data matrices to have an extra dimension.
+                A = jnp.expand_dims(data1, axis=1)
+                B = jnp.expand_dims(data2, axis=0)
+
+                # Compute the squared pairwise distances.
+                dis = (A - B) ** 2.0
+
+                # Sum the squared pairwise distances over the feature dimension.
+                dis = jnp.sum(dis, axis=-1)
+
+                # Squeeze the output to have shape (N, M)[].
+                dis = jnp.squeeze(dis)
+
+                return dis
+            dist_func = jax.pmap(_jax_pairwise_distance,in_axes=(0, None))
+            
+            data1, data2, *shape = reshape_for_jax(data1, data2, modules)
+            dis = dist_func(data1, data2)
+            dis = jax.device_get(dis).reshape(shape)
+            return dis
         if tqdm_flag:
             print(f'running k-means on {self.device}..')
         X = X.float()
@@ -370,38 +307,6 @@ class KMeans(object):
         return cluster_assignments.cpu()
 
 
-    def predict(
-            self,X, return_distances=False):
-        """
-        predict using cluster centers
-        :param X: (torch.tensor) matrix
-        :param cluster_centers: (torch.tensor) cluster centers
-        :param distance: (str) distance [options: 'euclidean', 'cosine'] [default: 'euclidean']
-        :param device: (torch.device) device [default: 'cpu']
-        :param gamma_for_soft_dtw: approaches to (hard) DTW as gamma -> 0
-        :return: (torch.tensor) cluster ids
-        """
-
-
-        #if X is a numpy array convert it into a torch tensor
-        if isinstance(X, np.ndarray):
-            X = torch.from_numpy(X)
-        # convert to float
-        X = X.float()
-        # transfer to device
-        if self.device != torch.device('cpu'):
-            X = X.to(self.device)
-        distance_matrix = jax_pairwise_distance(X, self.cluster_centers)
-        distance_matrix = torch.tensor(distance_matrix)
-        cluster_assignments = torch.argmin(distance_matrix, dim=1 if len(distance_matrix.shape) > 1 else 0)
-        if len(distance_matrix.shape) == 1:
-            cluster_assignments = cluster_assignments.unsqueeze(0)
-        if return_distances:
-            return cluster_assignments.cpu(), distance_matrix
-        else:
-            return cluster_assignments.cpu()
-
-
 def get_sklearn_feature_pipeline(tfidf_cfg):
     n_components, random_seed = tfidf_cfg.train.n_components, tfidf_cfg.train.random_seed
     stop_words = list(ENGLISH_STOP_WORDS.union(["#NUMBER"]))
@@ -422,13 +327,16 @@ def deserialize_objectref_dict(objectref_dict):
     return {k: cloudpickle.loads(v) for k, v in objectref_dict.items()}
 
 def fit_kmeans(embeddings, kmeans_cfg, **kwargs):    
+    import jax
+    import jax.numpy as jnp
+    modules = (jax, jnp)
     embeddings = DataLoader(embeddings, batch_size=kmeans_cfg.train.batch_size, drop_last=True)
     
     kmeans = KMeans(n_clusters=kmeans_cfg.n_clusters, balanced=True, **kwargs)
     with tqdm(dynamic_ncols=True,desc="fit_kmeans") as pbar:
         for i,batch in enumerate(embeddings):
             pbar.update(batch.shape[0])
-            kmeans.fit(batch, iter_limit=kmeans_cfg.train.iter_limit, online=True, iter_k=i)
+            kmeans.fit(batch, iter_limit=kmeans_cfg.train.iter_limit, online=True, iter_k=i, modules=modules)
     return kmeans
 
 
