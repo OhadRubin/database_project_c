@@ -652,7 +652,7 @@ def stage1(ds: ray.data.Dataset, cfg: object):
         num_cpus=cfg.kmeans.inference.num_cpus,
         concurrency=cfg.kmeans.inference.concurrency,
         fn_constructor_kwargs={"kmeans_ref": kmeans_s1_ref,
-                               "cluster_col_name": cfg.cluster_col_name},
+                               "cfg": cfg},
     )
     
     
