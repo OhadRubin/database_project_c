@@ -744,6 +744,7 @@ def run_clustering_pipeline(ds, cfg: object):
     for stage, func in zip(cfg.stages_list,[stage1, stage2]):
         stage_cfg = base_cfg.copy_and_resolve_references()
         stage_cfg.update(stage)
+        print(stage_cfg)
         ds = func(ds, stage_cfg)
     
     final_ds = ds.materialize()
