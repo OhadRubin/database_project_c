@@ -492,22 +492,13 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 def fit_predict(ds: ray.data.Dataset, cfg: object):
     print(f"--- {cfg.pretty_name} Starting ---")
     
-
-
-
-    
-    # ray.remote
     models_s1_ref = fit_models_remote.options(
             num_cpus=cfg.tfidf.train.num_cpus,
             resources={"TPU-v4-8-head": 1},
     ).remote(
             cfg, ds
     )
-    
-    # vectorizer_s1, kmeans_s1 = ray.get(models_s1_ref)
-    
-    # vectorizer_s1_ref = ray.put(vectorizer_s1)
-    # kmeans_s1_ref = ray.put(kmeans_s1)
+
 
     emb_tagged_ds_A = ds.map_batches(
         TFIDFInferenceModel,
@@ -668,15 +659,25 @@ def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
     print("--- Stage 2 Done ---")
     return final_ds
 
-@ray.remote
-def fit_predict_remote(ds: ray.data.Dataset, cfg: object):
-    return fit_predict(ds.materialize(), cfg)
-    
+
+
     
     
 from ray.util.queue import Queue, Empty
 
 
+
+from ray.util import ActorPool
+
+
+
+@ray.remote
+class Actor:
+    def __init__(self, cfg: object):
+        self.cfg = cfg
+    
+    def fit_predict_remote(self, ds: ray.data.Dataset):
+        return fit_predict(ds.materialize(), self.cfg).materialize()
 
 def new_stage2(ds: ray.data.Dataset, cfg: object):
     stage1_clusters = cfg.cluster_spec[0]
@@ -684,13 +685,11 @@ def new_stage2(ds: ray.data.Dataset, cfg: object):
     
     og_ds = ds
     ds_ref_list = []
-    for cluster_id in range(stage1_clusters):
-        ds = og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")
-        new_ds = fit_predict_remote.remote(ds, cfg)
-        new_ds = ray.get(new_ds).materialize()
-        ds_ref_list.append(new_ds)
-        
-    # ds_list = ray.get(ds_ref_list)
+    pool = ActorPool([Actor.remote() for _ in range(3)])
+    stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")  for cluster_id in range(stage1_clusters)]
+    ds_ref_list = pool.map(Actor.fit_predict_remote, stage1_datasets)
+    
+    ds_list = list(ds_ref_list)
     ds_list = ds_ref_list
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
