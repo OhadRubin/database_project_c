@@ -624,7 +624,7 @@ def stage2(tagged_ds_A: ray.data.Dataset, cfg: object):
 
     stage2_model_results_ds = tagged_ds_A.groupby(cfg.partition_cols[0]).map_groups(
         _fit_stage2,
-        num_cpus=cfg.stage2_train_cpus,
+        num_cpus=cfg.tfidf.train.num_cpus,
         batch_format="pandas",
         resources={"TPU-v4-8-head": 1},
     )
