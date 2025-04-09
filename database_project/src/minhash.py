@@ -681,6 +681,7 @@ def run_nd_step_for_workflow(args):
     try:
         import argparse
         minhash_args = argparse.Namespace(
+            use_ray=args.use_ray,
             input_file=input_files,
             threshold=args.threshold,
             num_perm=args.num_perm,
