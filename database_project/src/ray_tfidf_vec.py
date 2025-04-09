@@ -347,8 +347,8 @@ def fit_kmeans(embeddings, kmeans_cfg, **kwargs):
     return kmeans
 
 
-@ray.remote
-def fit_models_remote(
+
+def _fit_models_remote(
     cfg: object,
     ds: pd.DataFrame,
 ) -> Tuple[object, object]:
@@ -367,7 +367,9 @@ def fit_models_remote(
     print(f"[{stage_label}] K-means fitting done.")
     return vectorizer, kmeans
 
-
+@ray.remote
+def fit_models_remote(ds, cfg):
+    return _fit_models_remote(cfg, ds)
 
 
 class TFIDFInferenceModel:
@@ -407,15 +409,18 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 
 def fit_predict(ds: ray.data.Dataset, cfg: object):
     print(f"--- {cfg.pretty_name} Starting ---")
-    
-    models_s1_ref = fit_models_remote.options(
-            num_cpus=cfg.tfidf.train.num_cpus,
-            resources={"TPU-v4-8-head": 1},
-    ).remote(
-            cfg, ds
-    )
-    ray.get(models_s1_ref)
-    print(f"Models fitted and serialized.")
+    if False:
+        models_s1_ref = fit_models_remote.options(
+                num_cpus=cfg.tfidf.train.num_cpus,
+                resources={"TPU-v4-8-head": 1},
+        ).remote(
+                cfg, ds
+        )
+        ray.get(models_s1_ref)
+        print(f"Models fitted and serialized.")
+    else:
+        models_s1_ref = ray.put(_fit_models_remote(cfg, ds))
+        print(f"Models fitted and serialized.")
     
     
 
