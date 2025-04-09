@@ -1,3 +1,8 @@
+
+
+# log the start time
+START_TIME=$(date +%s)
+
 # Check if Java is installed, if not install it
 if ! command -v java &> /dev/null; then
     echo "Java not found, installing..."
@@ -118,7 +123,17 @@ while true; do
     sleep 1
 done
 $RAY_EXEC status
-
+# print here how long we waited
+# Calculate and log the time elapsed since START_TIME
+if [ -n "$START_TIME" ]; then
+    CURRENT_TIME=$(date +%s)
+    ELAPSED_TIME=$((CURRENT_TIME - START_TIME))
+    ELAPSED_MINUTES=$((ELAPSED_TIME / 60))
+    ELAPSED_SECONDS=$((ELAPSED_TIME % 60))
+    echo "Time elapsed since start: $ELAPSED_MINUTES minutes and $ELAPSED_SECONDS seconds"
+else
+    echo "START_TIME not set, cannot calculate elapsed time"
+fi
 
 SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"

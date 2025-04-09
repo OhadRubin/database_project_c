@@ -566,7 +566,7 @@ def run_nd_step_for_workflow(args):
         num_nodes = 1  # Default for local mode
     
     # Run the minhash LSH deduplication
-    result_df, duplicate_count = minhash_lsh({
+    record_count, total_time, nodes_used, duplicate_count = minhash_lsh({
         "input_file": input_files,
         "threshold": args.threshold,
         "num_perm": args.num_perm,
@@ -576,11 +576,21 @@ def run_nd_step_for_workflow(args):
         "mock": False  # Add the missing attribute
     })
     
+    # Create a dummy DataFrame for Ray dataset conversion
+    # We need to handle the case where minhash_lsh returns 4 values but we need a DataFrame
+    from pyspark.sql import Row
+    if not isinstance(record_count, type(spark.createDataFrame([]))):
+        # If record_count is not a DataFrame, create a simple dummy DataFrame
+        data = [Row(id=i, text=f"dummy_{i}") for i in range(record_count)]
+        result_df = spark.createDataFrame(data)
+    else:
+        result_df = record_count  # If it's already a DataFrame
+    
     # Convert to Ray dataset
     import ray.data
     ray_dataset = ray.data.from_spark(result_df)
     
     execution_time = time.time() - start_time
     
-    return ray_dataset, duplicate_count, num_nodes, execution_time
+    return ray_dataset, duplicate_count, nodes_used, execution_time
     
