@@ -139,7 +139,7 @@ SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/d
 SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 
 
-SCRIPT="python3.10 database_project/src/new_deduplication_spark.py --workflow nd_cl --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/run_workflows.py --workflow nd_cl --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
 
 # SCRIPT="$SCRIPT --implementation tfidf_minhash"
@@ -159,4 +159,4 @@ else
     echo "Skipping deduplication script on worker node"
 fi
 
-sleep 600
+sleep 6000

@@ -7,6 +7,12 @@ from typing import Tuple
 import numpy as np
 from pyspark import SparkConf
 from pyspark.sql import SparkSession
+import ray
+import time
+import glob
+import logging
+from pyspark import SparkConf
+from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from scipy.integrate import quad as integrate
 
@@ -274,20 +280,8 @@ def jaccard_hash(hashvalues_a, hashvalues_b) -> float:
             len(hashvalues_a)
         )
 
-class Document:
-    def __init__(self, key, hashvalues):
-        self.key = key
-        self.hashvalues = hashvalues
 
-class DocumentPair:
-    def __init__(self, doc1, doc2):
-        self.doc1 = doc1
-        self.doc2 = doc2
 
-class SimilarityPair:
-    def __init__(self, pair, similarity):
-        self.pair = pair
-        self.similarity = similarity
 
 def calculate_pair_similarity(doc_pair):
     """Calculate Jaccard similarity between document pair."""
@@ -333,28 +327,6 @@ def deduplicate(spark,edges, df):
     return deduplicated_df, duplicates_count
 
 
-
-def find_matching_pairs(candidate_pairs_rdd, similarity_threshold=0.8):
-    """Find pairs with similarity above threshold."""
-    # Calculate similarity scores for each pair
-    pairs_with_similarity = candidate_pairs_rdd.map(
-        lambda pair: SimilarityPair(pair, calculate_pair_similarity(pair))
-    )
-
-    # Filter pairs above similarity threshold
-    matching_pairs = pairs_with_similarity.filter(
-        lambda sim_pair: sim_pair.similarity > similarity_threshold
-    )
-
-    # Extract just the document keys from the pairs
-    document_pairs = matching_pairs.map(
-        lambda sim_pair: {sim_pair.pair.doc1.key, sim_pair.pair.doc2.key}
-    )
-
-    return document_pairs
-
-def generate_minhash_signatures_brute(corpus_rdd, num_perm, ngram_size, min_ngram_size, permutations):
-    return corpus_rdd.map(lambda x: (x[0], hash_content(x[1], num_perm, ngram_size, min_ngram_size, permutations)))
 
 
 # Create a reference to the tfidf_minhash function that we'll use later
@@ -416,7 +388,7 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 import glob
 import sys
-def minhash_lsh(args):
+def run_nd_step_for_workflow(ray_df, args):
     # Initialize variables that need to be returned
     num_nodes = 1  # Default value
     record_count = 0
@@ -428,331 +400,36 @@ def minhash_lsh(args):
     
     logger.info(f"minhash_lsh called with args: {args}")
 
-    if not args.mock:
-        if args.use_ray:
-            import ray
-            import raydp
-            ray.init(address='auto', ignore_reinit_error=True)
-            num_nodes = len([x for x in ray.nodes() if x["alive"]])
-            logger.info(f"Ray initialized with {num_nodes} nodes")
-            spark = raydp.init_spark(
-                    app_name="MinHashLSH",
-                    num_executors=num_nodes,
-                    executor_cores=235, # how many tasks the executor can run in parallel
-                    executor_memory="100g",
-                    configs = {
-                            'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
-                            'spark.debug.maxToStringFields': '100',
-
-                            'spark.driver.memory': '64g',
-                            "spark.driver.maxResultSize": "10g"
-                        })
-            
-        else:
-            logger.info("Initializing Spark session without Ray")
-            conf = SparkConf()
-            conf.set("spark.app.name", "MinHashLSH")
-            conf.set("spark.debug.maxToStringFields", "100")
-            conf.set("spark.local.dir", "/dev/shm/pyspark_dir") #TODO: move in arguements
-            conf.set("spark.driver.memory", "64g")
-            conf.set("spark.executor.memory", "64g")
-            conf.set("spark.driver.maxResultSize", "10g")
-            spark = SparkSession.builder.config(conf=conf).getOrCreate()
-            num_nodes=1
-            
-        log: Logger = spark.sparkContext._jvm.org.apache.log4j.LogManager.getLogger(__name__)  # type: ignore
-        if not os.path.exists(args.output):
-            os.makedirs(args.output)
-            log.info(f"Created output directory: {args.output}")
-            logger.info(f"Created output directory: {args.output}")
-
-
-        # Load data from either BigQuery or local file
-        if args.table:
-            logger.info(f"Loading data from BigQuery table: {args.table}")
-            df = spark.read.format("bigquery").option("table", args.table).load()
-        else:
-            # Check if input_file is a list or a string
-            if isinstance(args.input_file, list):
-                logger.info(f"Input is a list of {len(args.input_file)} files")
-                first_file = args.input_file[0] if args.input_file else None
-                file_extension = os.path.splitext(first_file.strip(".gz"))[1].lower() if first_file else ''
-            else:
-                logger.info(f"Input is a single file pattern: {args.input_file}")
-                file_extension = os.path.splitext(args.input_file.strip(".gz"))[1].lower()
-            
-            logger.info(f"Detected file extension: {file_extension}")
-            
-            if file_extension == '.csv':
-                logger.info("Reading CSV file")
-                df = spark.read.option("header", "true").csv(args.input_file)
-                
-            elif file_extension.endswith('.json'):
-                logger.info("Reading JSON file(s)")
-                input_file = args.input_file
-                
-                if isinstance(input_file, list):
-                    logger.info(f"Processing list of {len(input_file)} files")
-                    # Log first few files
-                    for i, f in enumerate(input_file[:3]):
-                        if os.path.exists(f):
-                            size = os.path.getsize(f)
-                            logger.info(f"File {i+1}: {f} (Size: {size} bytes)")
-                        else:
-                            logger.warning(f"File does not exist: {f}")
-                else:
-                    logger.info(f"Processing file pattern: {input_file}")
-                    if args.limit_files is not None:
-                        input_file = glob.glob(input_file)[:args.limit_files]
-                        logger.info(f"Processing {len(input_file)} files after applying limit")
-                        # Log first few files
-                        for i, f in enumerate(input_file[:3]):
-                            if os.path.exists(f):
-                                size = os.path.getsize(f)
-                                logger.info(f"File {i+1}: {f} (Size: {size} bytes)")
-                            else:
-                                logger.warning(f"File does not exist: {f}")
-                        
-                        logger.info(f"Total size: {get_total_size_gb(input_file):.2f} GB")
-                
-                # Check if there are any files to process
-                if (isinstance(input_file, list) and len(input_file) == 0) or (isinstance(input_file, str) and len(glob.glob(input_file)) == 0):
-                    logger.error("No files to process!")
-                    return 0, 0, num_nodes, 0
-                    
-                try:
-                    logger.info("Attempting to read JSON files...")
-                    df = spark.read.json(input_file)
-                    df_count = df.count()
-                    logger.info(f"Successfully read {df_count} records from JSON files")
-                    logger.info(f"DataFrame schema: {df.schema}")
-                    
-                    # Check if the column we're supposed to process exists
-                    if args.column not in df.columns:
-                        available_cols = df.columns
-                        logger.error(f"Column '{args.column}' not found in DataFrame. Available columns: {available_cols}")
-                        return 0, 0, num_nodes, 0
-                    
-                    # Sample a few rows to verify content
-                    sample_rows = df.limit(2).collect()
-                    for i, row in enumerate(sample_rows):
-                        try:
-                            sample_text = row[args.column]
-                            text_preview = sample_text[:100] + "..." if len(sample_text) > 100 else sample_text
-                            logger.info(f"Sample row {i+1}, column '{args.column}': {text_preview}")
-                        except Exception as e:
-                            logger.error(f"Error accessing column '{args.column}' in row {i+1}: {e}")
-                    
-                except Exception as e:
-                    logger.error(f"Error reading JSON files: {e}", exc_info=True)
-                    return 0, 0, num_nodes, 0
-                
-            elif file_extension in ['.parquet', '.pq']:
-                logger.info("Reading Parquet file")
-                df = spark.read.parquet(args.input_file)
-            else:
-                logger.error(f"Unsupported file format: {file_extension}")
-                sys.exit(1)
-        
-        
-        import time
-
-        
-        # Track original record count
-        try:
-            original_count = df.count()
-            logger.info(f"Original record count: {original_count}")
-            
-            if original_count == 0:
-                logger.warning("DataFrame is empty, skipping deduplication")
-                return 0, 0, num_nodes, 0
-                
-            start_time = time.time()
-            df, duplicate_count = _minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
-
-            dedup_count = original_count-duplicate_count
-            log.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
-            logger.info(f"Original records: {original_count}, Deduplicated: {dedup_count}, Duplicates: {duplicate_count}")
-            dedup_time = time.time() - start_time
-            logger.info(f"Deduplication took {dedup_time/60:.2f} minutes")
-            
-            start_time = time.time()
-            df.write.option("maxRecordsPerFile", 300_000).option(
-                "intermediateFormat", "orc"
-            ).parquet(args.output, mode="overwrite")
-            write_time = time.time() - start_time
-            
-            logger.info(f"Writing output took {write_time/60:.2f} minutes")
-            
-            # Get final record count
-            record_count = df.count()
-            logger.info(f"Final record count: {record_count}")
-            total_time = dedup_time + write_time
-        except Exception as e:
-            logger.error(f"Error in deduplication process: {e}", exc_info=True)
-            return 0, 0, num_nodes, 0
-    else:
-        logger.info("Mock mode enabled, skipping actual processing")
-        duplicate_count=0
-        record_count=0
-        total_time=0
-    return record_count, total_time, num_nodes, duplicate_count
     
-def run_nd_step_for_workflow(args):
-    """
-    Run the Near-Duplicate detection step and return a Ray dataset.
-    
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Arguments containing input_file, threshold, num_perm, ngram_size, 
-        min_ngram_size, column, limit_files, and use_ray.
+
+    num_nodes = len([x for x in ray.nodes() if x["alive"]])
+    logger.info(f"Ray initialized with {num_nodes} nodes")
+    spark = raydp.init_spark(
+            app_name="MinHashLSH",
+            num_executors=num_nodes,
+            executor_cores=235, # how many tasks the executor can run in parallel
+            executor_memory="100g",
+            configs = {
+                    'spark.local.dir': '/dev/shm/pyspark_dir',  # TODO: move in arguements
+                    'spark.debug.maxToStringFields': '100',
+
+                    'spark.driver.memory': '64g',
+                    "spark.driver.maxResultSize": "10g"
+                })
         
-    Returns
-    -------
-    Tuple[ray.data.Dataset, int, int, float]
-        A tuple containing:
-        - ray_dataset: The Ray dataset after deduplication
-        - dupe_count: Number of duplicates removed
-        - num_nodes: Number of nodes used
-        - execution_time: Time taken to execute the ND step
-    """
-    import ray
+        
+
+    df = ray_df.to_spark(spark)
+    original_count = df.count()
+    logger.info(f"Original record count: {original_count}")
+    
     import time
-    import glob
-    import logging
-    from pyspark import SparkConf
-    from pyspark.sql import SparkSession
-    
-    logger = logging.getLogger(__name__)
     start_time = time.time()
-    
-    # Get the files
-    logger.info(f"Looking for input files with pattern: {args.input_file}")
-    input_files = glob.glob(args.input_file)
-    logger.info(f"Found {len(input_files)} files matching the pattern")
-    
-    if args.limit_files:
-        input_files = input_files[:args.limit_files]
-        logger.info(f"Limiting to {len(input_files)} files due to limit_files={args.limit_files}")
-    
-    if not input_files:
-        logger.error(f"No files found matching pattern: {args.input_file}")
-        # Try listing parent directory contents to debug
-        import os
-        parent_dir = os.path.dirname(args.input_file)
-        if parent_dir:
-            try:
-                dir_contents = os.listdir(parent_dir)
-                logger.info(f"Contents of directory {parent_dir}: {dir_contents}")
-            except Exception as e:
-                logger.error(f"Error listing directory {parent_dir}: {e}")
-        raise ValueError(f"No files found matching pattern: {args.input_file}")
-    
-    # Log some details about the first few files
-    for i, file_path in enumerate(input_files[:3]):
-        try:
-            file_size = os.path.getsize(file_path)
-            logger.info(f"File {i+1}: {file_path}, Size: {file_size} bytes")
-        except Exception as e:
-            logger.error(f"Error checking file {file_path}: {e}")
-    
-    # Set up Spark with Ray if requested
-    if args.use_ray:
-        logger.info("Setting up Spark with Ray")
-        import raydp
-        num_nodes = len([n for n in ray.nodes() if n["alive"]])
-        logger.info(f"Found {num_nodes} active Ray nodes")
-        spark = raydp.init_spark(
-            app_name="ND-Step-Workflow",
-            num_executors=num_nodes * 4,
-            executor_cores=6,
-            executor_memory="10g"
-        )
-    else:
-        # Regular Spark setup
-        logger.info("Setting up regular Spark session")
-        conf = SparkConf().setAppName("ND-Step-Workflow")
-        spark = SparkSession.builder.config(conf=conf).getOrCreate()
-        num_nodes = 1  # Default for local mode
-    
-    # Run the minhash LSH deduplication
-    logger.info(f"Running minhash_lsh with {len(input_files)} input files")
-    try:
-        import argparse
-        minhash_args = argparse.Namespace(
-            use_ray=args.use_ray,
-            input_file=input_files,
-            threshold=args.threshold,
-            num_perm=args.num_perm,
-            ngram_size=args.ngram_size,
-            min_ngram_size=args.min_ngram_size,
-            column=args.column,
-            mock=False,  # Add the missing attribute
-            output=args.output if hasattr(args, 'output') else '/tmp/output'  # Ensure output is set
-        )
-        record_count, total_time, nodes_used, duplicate_count = minhash_lsh(minhash_args)
-        logger.info(f"minhash_lsh completed: records={record_count}, time={total_time}, nodes={nodes_used}, duplicates={duplicate_count}")
-    except Exception as e:
-        logger.error(f"Error in minhash_lsh: {e}", exc_info=True)
-        raise
-    
-    # Create a dummy DataFrame for Ray dataset conversion
-    # We need to handle the case where minhash_lsh returns 4 values but we need a DataFrame
-    from pyspark.sql import Row
-    logger.info(f"Record count type: {type(record_count)}")
-    
-    try:
-        if not isinstance(record_count, type(spark.createDataFrame([]))):
-            # If record_count is not a DataFrame, create a simple dummy DataFrame
-            logger.info(f"Creating dummy DataFrame with {record_count} rows")
-            if record_count > 0:
-                data = [Row(id=i, text=f"dummy_{i}") for i in range(record_count)]
-                result_df = spark.createDataFrame(data)
-            else:
-                logger.warning("Record count is 0, creating empty DataFrame with schema")
-                from pyspark.sql.types import StructType, StructField, IntegerType, StringType
-                schema = StructType([
-                    StructField("id", IntegerType(), False),
-                    StructField("text", StringType(), False)
-                ])
-                result_df = spark.createDataFrame([], schema)
-        else:
-            logger.info(f"Using existing DataFrame with {record_count.count()} rows")
-            result_df = record_count  # If it's already a DataFrame
-        
-        # Log DataFrame schema and count
-        logger.info(f"DataFrame schema: {result_df.schema}")
-        count = result_df.count()
-        logger.info(f"DataFrame count: {count}")
-        
-        # Convert to Ray dataset
-        import ray.data
-        logger.info("Converting DataFrame to Ray dataset")
-        
-        # Handle the empty DataFrame case differently
-        if count == 0:
-            logger.info("DataFrame is empty, creating empty Ray dataset with schema")
-            # Create a minimal Ray dataset with the right schema instead of using from_spark
-            import pandas as pd
-            empty_df = pd.DataFrame({"id": [], "text": []})
-            ray_dataset = ray.data.from_pandas(empty_df)
-        else:
-            ray_dataset = ray.data.from_spark(result_df)
-            
-        logger.info(f"Ray dataset created with {ray_dataset.count()} records")
-    except Exception as e:
-        logger.error(f"Error creating DataFrame or Ray dataset: {e}", exc_info=True)
-        # Create a fallback minimal dataset
-        import ray.data
-        import pandas as pd
-        logger.warning("Creating fallback empty Ray dataset")
-        empty_df = pd.DataFrame({"id": [], "text": []})
-        ray_dataset = ray.data.from_pandas(empty_df)
-        logger.info("Fallback Ray dataset created successfully")
-    
+    df, duplicate_count = _minhash_lsh(spark, df, args.column, args.num_perm, args.ngram_size, args.min_ngram_size, args.threshold)
+    record_count = df.count()
+    total_time = time.time() - start_time
+    logger.info(f"Total time taken: {total_time:.2f} seconds")
     execution_time = time.time() - start_time
     logger.info(f"Total execution time: {execution_time:.2f} seconds")
-    
-    return ray_dataset, duplicate_count, nodes_used, execution_time
-    
+    ray_dataset = ray.data.from_spark(df)
+    return ray_dataset, duplicate_count, execution_time
