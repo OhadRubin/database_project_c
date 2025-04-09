@@ -23,7 +23,8 @@ try:
     from database_project.src.ray_tfidf_vec import (
         run_cl_step_for_workflow, # Takes (ray_dataset, cfg, out_path), returns (out_path, time)
         run_cl_nd_integrated_workflow, # Takes (args, cfg), returns (out_path, time, final_count, dupe_count, nodes)
-        read_config
+        read_config,
+        run_clustering_pipeline
     )
 except ImportError as e:
     print(f"Error importing core workflow functions: {e}")
@@ -115,82 +116,42 @@ if __name__ == "__main__":
 
     # --- Initialize Ray ---
     # Needs careful handling if Spark also uses RayDP
-    try:
-        import ray
-        # Use ignore_reinit_error=True if Ray might be initialized elsewhere (e.g., by RayDP)
-        if not ray.is_initialized():
-             ray.init(address='auto', ignore_reinit_error=True)
-             logger.info(f"Ray initialized: {ray.cluster_resources()}")
-        else:
-             logger.info(f"Ray already initialized: {ray.cluster_resources()}")
-             num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
-    except Exception as e:
-        logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
-        sys.exit(1)
+    import ray
+    ray.init(address='auto')
+    num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
+    
+    cfg = read_config(args.config_file)
+    cfg.args = args
+
+    start_time = time.time()
+    input_file = glob.glob(args.input_file)[:args.limit_files]    
+    ray_df = ray.data.read_json(input_file, override_num_blocks=cfg.num_blocks)
+
 
 
     try:
         # --- Execute Selected Workflow ---
         if args.workflow == "nd_cl":
             logger.info("Executing ND -> CL workflow...")
-
             # === Stage 1: ND ===
             logger.info("Running ND step...")
-            try:
-                intermediate_ray_ds, nd_duplicates, num_nodes_nd, nd_time = run_nd_step_for_workflow(args)
-                if intermediate_ray_ds is None:
-                    logger.error("ND step failed to produce a Ray Dataset.")
-                    sys.exit(1)
-                
-                # Record count *after* ND
-                final_record_count = intermediate_ray_ds.count()
-                total_duplicate_count = nd_duplicates
-                num_nodes_used = num_nodes_nd # Or max if CL uses different nodes
-                logger.info(f"ND step completed in {nd_time:.2f}s. Records after ND: {final_record_count}, Duplicates found: {total_duplicate_count}")
-            except Exception as e:
-                logger.error(f"Error in ND step: {e}", exc_info=True)
-                
-                # Create a fallback empty dataset with the right schema
-                logger.warning("Creating an empty fallback Ray dataset due to error")
-                import ray.data
-                import pandas as pd
-                
-                # Create a minimal schema that CL can process
-                empty_df = pd.DataFrame({"id": [], "text": []})
-                intermediate_ray_ds = ray.data.from_pandas(empty_df)
-                nd_duplicates = 0
-                num_nodes_nd = len([x for x in ray.nodes() if x["alive"]])
-                nd_time = 0
-                final_record_count = 0
-                total_duplicate_count = 0
-                num_nodes_used = num_nodes_nd
-                
-                logger.warning("Proceeding with empty dataset")
+            intermediate_ray_ds, nd_duplicates, nd_time = run_nd_step_for_workflow(ray_df, args)
+            final_record_count = intermediate_ray_ds.count()
+            total_duplicate_count = nd_duplicates
+
                 
             # === Stage 2: CL ===
             logger.info("Running CL step...")
-            cfg = read_config(args.config_file)
-            # Pass potentially modified args if CL config needs them
-            # cfg.args = args
-            final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
+
+            # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
+            start_time = time.time()
+            clustered_ds = run_clustering_pipeline(intermediate_ray_ds, cfg)
+            cl_time = time.time() - start_time
             logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
-            # workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
+            workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
 
         elif args.workflow == "cl_nd":
-            logger.info("Executing CL -> ND workflow...")
-
-            # === Integrated CL + ND ===
-            cfg = read_config(args.config_file)
-            # Pass args needed by the integrated function (input, output, ND params etc.)
-            
-            # cfg.args = args
-            
-            final_output_path, wf_time, final_record_count, total_duplicate_count, num_nodes_clnd = run_cl_nd_integrated_workflow(args, cfg)
-            num_nodes_used = num_nodes_clnd
-            # workflow_total_time = wf_time # Use time reported by function
-            logger.info(f"CL->ND integrated workflow completed in {wf_time:.2f}s.")
-            logger.info(f"Final Records: {final_record_count}, Intra-Cluster Duplicates Removed: {total_duplicate_count}")
-            logger.info(f"Final output: {final_output_path}")
+            assert False, "Not implemented"
 
         else:
             # Should not happen due to argparse choices
@@ -200,40 +161,6 @@ if __name__ == "__main__":
         actual_workflow_time = time.time() - workflow_start_time
         logger.info(f"Workflow '{args.workflow}' finished. Total wall clock time: {actual_workflow_time:.2f} seconds.")
 
-        # --- Log to Database ---
-        logger.info("Logging benchmark results to database...")
-        engine = init_db(args.db_uri) # Uses arg or default logic
-        session = get_session(engine)
-
-        # Calculate total input size for logging
-        total_size_gb = None
-        input_file_for_log = args.input_file
-        if args.input_file and args.limit_files is not None:
-            try:
-                input_files = glob.glob(args.input_file)[:args.limit_files]
-                total_size_gb = get_total_size_gb(input_files)
-                logger.info(f"Calculated input size: {total_size_gb:.2f} GB for {len(input_files)} files")
-                # Optionally shorten input_file string for DB if it's a long pattern
-                if len(input_files) != 1:
-                     input_file_for_log = f"{args.input_file} (Limit: {args.limit_files})"
-                else:
-                     input_file_for_log = input_files[0] # Log specific file if only one
-            except Exception as e:
-                 logger.warning(f"Could not glob or calculate size for {args.input_file}: {e}")
-
-        # Prepare args for DB logging function (ensure it matches BenchmarkRun.create_from_args expectations)
-        log_args = argparse.Namespace(
-             # Essential args expected by create_from_args
-             input_file=input_file_for_log,
-             table=None, # Assuming file input
-             output=final_output_path, # Log the final output path
-             threshold=args.threshold,
-             ngram_size=args.ngram_size,
-             min_ngram_size=args.min_ngram_size,
-             num_perm=args.num_perm,
-             limit_files=args.limit_files
-             # Add any other args needed by create_from_args
-        )
 
         benchmark_notes = args.notes if args.notes else f"Workflow: {args.workflow}"
         if args.workflow == 'cl_nd':
@@ -242,7 +169,7 @@ if __name__ == "__main__":
 
         benchmark_run = BenchmarkRun.create_from_args(
             session=session,
-            args=log_args,
+            args=args,
             duplicate_count=total_duplicate_count, # Meaning depends on workflow
             record_count=final_record_count,       # Final count after all steps
             execution_time=actual_workflow_time,   # Total wall clock time

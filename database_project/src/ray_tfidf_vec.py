@@ -508,7 +508,7 @@ def fake_stage1(ds, cfg):
     
 
 
-def run_clustering_pipeline(ds, cfg: object):
+def run_cl_step_for_workflow(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     os.makedirs(output_base_path, exist_ok=True)
     
@@ -540,211 +540,15 @@ def run_clustering_pipeline(ds, cfg: object):
     
     final_ds:ray.data.Dataset = final_ds.repartition(40)
     
-    print(f"Final dataset successfully written to {output_base_path}")
-    final_ds.write_parquet(
-        output_base_path,
-        partition_cols=partition_cols,
-    )
-    print("--- Pipeline Finished ---")
+    # print(f"Final dataset successfully written to {output_base_path}")
+    return final_ds
+    # final_ds.write_parquet(
+    #     output_base_path,
+    #     partition_cols=partition_cols,
+    # )
+    # print("--- Pipeline Finished ---")
 
     
-
-
-
-def tfidf_minhash_ray(args):
-    cfg = read_config("database_project/src/configs/base.yml")
-    cfg.args = args
-
-    start_time = time.time()
-    
-
-    if args.limit_files is not None:
-        input_file = glob.glob(args.input_file)[:args.limit_files]    
-    ray_df = ray.data.read_json(input_file, override_num_blocks=cfg.num_blocks)
-    
-    
-    print(f"Ray Dataset created with {ray_df.count()} rows")
-    
-    # Run the clustering pipeline
-    run_clustering_pipeline(ray_df, cfg)
-    
-    end_time = time.time()
-    print(f"Total pipeline execution time: {end_time - start_time:.2f} seconds")
-    
-    return f"{cfg.base_dir}/ray_output_final_clustered"
-    
-
-
-
-    
-    
-    
-def run_cl_step_for_workflow(ray_dataset, cfg, output_path):
-    """
-    Run the Clustering step on a Ray dataset and save the results.
-    
-    Parameters
-    ----------
-    ray_dataset : ray.data.Dataset
-        The Ray dataset to cluster
-    cfg : config_dict.ConfigDict
-        Configuration for clustering
-    output_path : str
-        Path to save the clustered data
-        
-    Returns
-    -------
-    Tuple[str, float]
-        A tuple containing:
-        - output_path: Path where results were saved
-        - execution_time: Time taken to execute the CL step
-    """
-    import time
-    import os
-    
-    start_time = time.time()
-    
-    # Run the clustering pipeline on the ray dataset
-    clustered_ds = run_clustering_pipeline(ray_dataset, cfg)
-    
-    # Save the clustered dataset
-    os.makedirs(output_path, exist_ok=True)
-    clustered_ds.write_parquet(os.path.join(output_path, "clustered_data"))
-    
-    execution_time = time.time() - start_time
-    
-    return output_path, execution_time
-
-def run_cl_nd_integrated_workflow(args, cfg):
-    """
-    Run an integrated workflow that first clusters data and then removes
-    near-duplicates within each cluster.
-    
-    Parameters
-    ----------
-    args : argparse.Namespace
-        Arguments for the workflow
-    cfg : config_dict.ConfigDict
-        Configuration for clustering
-        
-    Returns
-    -------
-    Tuple[str, float, int, int, int]
-        A tuple containing:
-        - output_path: Path where results were saved
-        - execution_time: Total execution time
-        - final_count: Final number of records
-        - dupe_count: Number of duplicates removed
-        - num_nodes: Number of nodes used
-    """
-    import time
-    import glob
-    import os
-    import ray
-    import ray.data
-    
-    start_time = time.time()
-    
-    # Get the files
-    input_files = glob.glob(args.input_file)
-    if args.limit_files:
-        input_files = input_files[:args.limit_files]
-    
-    if not input_files:
-        raise ValueError(f"No files found matching pattern: {args.input_file}")
-    
-    # Load the data into a Ray dataset
-    ds = ray.data.read_json(input_files)
-    
-    # Get the initial count
-    initial_count = ds.count()
-    
-    # Get the number of nodes
-    num_nodes = len([n for n in ray.nodes() if n["alive"]])
-    
-    # First run the clustering step
-    clustered_ds = run_clustering_pipeline(ds, cfg)
-    
-    # Group by cluster and apply ND within each cluster
-    from database_project.src.minhash import hash_content, optimal_param
-    
-    total_dupes = 0
-    
-    def deduplicate_cluster(cluster_df):
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        import numpy as np
-        
-        if len(cluster_df) < 2:
-            return cluster_df
-        
-        # Process each cluster separately for ND
-        texts = cluster_df[args.column].tolist()
-        ids = cluster_df.index.tolist()
-        
-        # Create MinHash signatures
-        num_perm = args.num_perm
-        threshold = args.threshold
-        ngram_size = args.ngram_size
-        min_ngram_size = args.min_ngram_size
-        
-        # Generate permutations
-        a = np.random.randint(1, MERSENNE_PRIME, num_perm, dtype=np.uint64)
-        b = np.random.randint(0, MERSENNE_PRIME, num_perm, dtype=np.uint64)
-        permutations = np.vstack([a, b])
-        
-        # Compute hashes for each document
-        signatures = []
-        for i, text in enumerate(texts):
-            hashvalues = hash_content(text, num_perm, ngram_size, min_ngram_size, permutations)
-            signatures.append(hashvalues)
-        
-        # Find duplicate pairs
-        b, r = optimal_param(threshold, num_perm)
-        
-        # Identify duplicates (simplistic approach - can be optimized)
-        duplicates = set()
-        for i in range(len(signatures)):
-            for j in range(i+1, len(signatures)):
-                # Jaccard similarity from signatures
-                sim = (signatures[i] == signatures[j]).mean()
-                if sim >= threshold:
-                    # Keep the first document, mark the second as duplicate
-                    duplicates.add(j)
-        
-        # Create the deduplicated dataframe
-        nonlocal total_dupes
-        total_dupes += len(duplicates)
-        
-        # Return only non-duplicate rows
-        keep_indices = [i for i in range(len(cluster_df)) if i not in duplicates]
-        return cluster_df.iloc[keep_indices]
-    
-    # Group by cluster and apply deduplication
-    def deduplicate_group(batch):
-        import pandas as pd
-        result = pd.DataFrame()
-        for cluster_id, group in batch.groupby('cluster_id'):
-            result = pd.concat([result, deduplicate_cluster(group)])
-        return result
-    
-    # Apply deduplication to each batch
-    deduplicated_ds = clustered_ds.map_batches(deduplicate_group, batch_size=1000)
-    
-    # Save the final result
-    os.makedirs(args.output, exist_ok=True)
-    final_path = os.path.join(args.output, "integrated_workflow_results")
-    deduplicated_ds.write_parquet(final_path)
-    
-    # Get the final count
-    final_count = deduplicated_ds.count()
-    
-    execution_time = time.time() - start_time
-    
-    return final_path, execution_time, final_count, total_dupes, num_nodes
-
-    
-
-
 
     
     

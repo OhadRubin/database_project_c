@@ -388,6 +388,7 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 import glob
 import sys
+import raydp
 def run_nd_step_for_workflow(ray_df, args):
     # Initialize variables that need to be returned
     num_nodes = 1  # Default value
@@ -400,7 +401,6 @@ def run_nd_step_for_workflow(ray_df, args):
     
     logger.info(f"minhash_lsh called with args: {args}")
 
-    
 
     num_nodes = len([x for x in ray.nodes() if x["alive"]])
     logger.info(f"Ray initialized with {num_nodes} nodes")
@@ -432,4 +432,5 @@ def run_nd_step_for_workflow(ray_df, args):
     execution_time = time.time() - start_time
     logger.info(f"Total execution time: {execution_time:.2f} seconds")
     ray_dataset = ray.data.from_spark(df)
+    raydp.stop_spark()
     return ray_dataset, duplicate_count, execution_time
