@@ -388,8 +388,8 @@ def get_total_size_gb(files):
     return total_bytes / (1024 * 1024 * 1024)  # Convert bytes to GB
 import glob
 import sys
-import raydp
 def run_nd_step_for_workflow(ray_df, args):
+    import raydp
     # Initialize variables that need to be returned
     num_nodes = 1  # Default value
     record_count = 0
@@ -416,7 +416,9 @@ def run_nd_step_for_workflow(ray_df, args):
                     'spark.driver.memory': '64g',
                     "spark.driver.maxResultSize": "10g"
                 })
-        
+    spark_context = spark.sparkContext
+    
+    spark_context.addFile("database_project/src/minhash.py")
         
 
     df = ray_df.to_spark(spark)

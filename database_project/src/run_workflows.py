@@ -14,9 +14,6 @@ from typing import Iterable
 from typing import List
 from typing import Tuple
 
-import numpy as np
-from pyspark import SparkConf
-from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from scipy.integrate import quad as integrate
 import glob
