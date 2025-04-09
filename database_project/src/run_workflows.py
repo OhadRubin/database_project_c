@@ -153,7 +153,7 @@ if __name__ == "__main__":
             intermediate_ray_ds.write_parquet(
                 f"{cfg.base_dir}/ray_output_nd_step" ,
             )
-            ray.stop()
+            ray.shutdown()
             print("--- Pipeline Finished ---")
             ray.init(address='auto', 
             #  log_to_driver=False
