@@ -31,16 +31,10 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
 from ray_tfidf_vec import (
     read_config,
-    run_clustering_pipeline
+    run_cl_step_for_workflow
 )
 
 
-# --- Import Benchmarking DB Logic ---
-try:
-    from database_project.src.db import init_db, get_session, BenchmarkRun
-except ImportError as e:
-    print(f"Error importing DB functions: {e}")
-    sys.exit(1)
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -149,7 +143,7 @@ if __name__ == "__main__":
 
             # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
             start_time = time.time()
-            clustered_ds = run_clustering_pipeline(intermediate_ray_ds, cfg)
+            clustered_ds = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
             cl_time = time.time() - start_time
             logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
             workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
@@ -170,7 +164,7 @@ if __name__ == "__main__":
         if args.workflow == 'cl_nd':
              benchmark_notes += f" (CL Cfg: {os.path.basename(args.config_file)})"
 
-        from src.db import init_db, get_session, BenchmarkRun
+        from db import init_db, get_session, BenchmarkRun
         
         engine = init_db()
         session = get_session(engine)
