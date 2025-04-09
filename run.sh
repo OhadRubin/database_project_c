@@ -139,8 +139,8 @@ SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/d
 SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 
 
-# SCRIPT="python3.10 database_project/src/run_workflows.py --workflow nd_cl --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
-SCRIPT="python3.10 database_project/src/run_workflows.py --workflow cl_nd --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/run_workflows.py --workflow nd_cl --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+# SCRIPT="python3.10 database_project/src/run_workflows.py --workflow cl_nd --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
 
 # SCRIPT="$SCRIPT --implementation tfidf_minhash"
@@ -149,7 +149,7 @@ SCRIPT="python3.10 database_project/src/run_workflows.py --workflow cl_nd --inpu
 # Run only on head node
 if $IS_HEAD; then
     # for NUM_FILES in 1 5 10 20 30 40; do
-    for NUM_FILES in 40; do
+    for NUM_FILES in 10; do
         COMMAND="$SCRIPT --limit_files $NUM_FILES"
         rm -rf /dev/shm/c4_outputs 
         mkdir -p /dev/shm/c4_outputs
