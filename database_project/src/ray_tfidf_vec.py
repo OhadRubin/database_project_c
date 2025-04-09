@@ -409,7 +409,7 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 
 def fit_predict(ds: ray.data.Dataset, cfg: object):
     print(f"--- {cfg.pretty_name} Starting ---")
-    if False:
+    if True:
         models_s1_ref = fit_models_remote.options(
                 num_cpus=cfg.tfidf.train.num_cpus,
                 resources={"TPU-v4-8-head": 1},
@@ -452,14 +452,14 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
 
 def stage1(ds: ray.data.Dataset, cfg: object):
     start_time = time.time()
-    print(f"Schema:", ds.schema())
-    print(f"Sample row:", ds.take(1))
+    # print(f"Schema:", ds.schema())
+    # print(f"Sample row:", ds.take(1))
     tagged_ds_A = fit_predict(ds, cfg).materialize()
 
     end_time = time.time()
     print(f"{cfg.pretty_name} complete. Time taken: {end_time - start_time:.2f} seconds")
-    print(f"Schema:", tagged_ds_A.schema())
-    print(f"Sample row after {cfg.pretty_name}:", tagged_ds_A.take(1))
+    # print(f"Schema:", tagged_ds_A.schema())
+    # print(f"Sample row after {cfg.pretty_name}:", tagged_ds_A.take(1))
     return tagged_ds_A
     
     
