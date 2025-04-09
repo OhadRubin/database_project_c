@@ -432,7 +432,7 @@ def minhash_lsh(args):
         if args.use_ray:
             import ray
             import raydp
-            ray.init(address='auto')
+            ray.init(address='auto', ignore_reinit_error=True)
             num_nodes = len([x for x in ray.nodes() if x["alive"]])
             logger.info(f"Ray initialized with {num_nodes} nodes")
             spark = raydp.init_spark(
