@@ -434,5 +434,5 @@ def run_nd_step_for_workflow(ray_df, args):
     execution_time = time.time() - start_time
     logger.info(f"Total execution time: {execution_time:.2f} seconds")
     ray_dataset = ray.data.from_spark(df).materialize()
-    # raydp.stop_spark(cleanup_data=False)
+    raydp.stop_spark(cleanup_data=False)
     return ray_dataset, duplicate_count, execution_time
