@@ -428,7 +428,7 @@ def minhash_lsh(args):
     
     logger.info(f"minhash_lsh called with args: {args}")
 
-    if hasattr(args, 'mock') and not args.mock:
+    if not args.mock:
         if args.use_ray:
             import ray
             import raydp
@@ -679,16 +679,18 @@ def run_nd_step_for_workflow(args):
     # Run the minhash LSH deduplication
     logger.info(f"Running minhash_lsh with {len(input_files)} input files")
     try:
-        record_count, total_time, nodes_used, duplicate_count = minhash_lsh({
-            "input_file": input_files,
-            "threshold": args.threshold,
-            "num_perm": args.num_perm,
-            "ngram_size": args.ngram_size,
-            "min_ngram_size": args.min_ngram_size,
-            "column": args.column,
-            "mock": False,  # Add the missing attribute
-            "output": args.output if hasattr(args, 'output') else '/tmp/output'  # Ensure output is set
-        })
+        import argparse
+        minhash_args = argparse.Namespace(
+            input_file=input_files,
+            threshold=args.threshold,
+            num_perm=args.num_perm,
+            ngram_size=args.ngram_size,
+            min_ngram_size=args.min_ngram_size,
+            column=args.column,
+            mock=False,  # Add the missing attribute
+            output=args.output if hasattr(args, 'output') else '/tmp/output'  # Ensure output is set
+        )
+        record_count, total_time, nodes_used, duplicate_count = minhash_lsh(minhash_args)
         logger.info(f"minhash_lsh completed: records={record_count}, time={total_time}, nodes={nodes_used}, duplicates={duplicate_count}")
     except Exception as e:
         logger.error(f"Error in minhash_lsh: {e}", exc_info=True)
