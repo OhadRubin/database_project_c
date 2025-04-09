@@ -21,7 +21,8 @@ import time
 import logging
 import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-
+from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
+from ray_tfidf_vec import run_cl_step_for_workflow
 
 # --- Import Modified Core Logic Functions ---
 # These functions are assumed to be modified to handle in-memory Ray Datasets
@@ -141,7 +142,7 @@ if __name__ == "__main__":
             # === Stage 1: ND ===
             logger.info("Running ND step...")
             
-            from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
+            
             intermediate_ray_ds, nd_duplicates, nd_time = run_nd_step_for_workflow(ray_df, args)
             final_record_count = intermediate_ray_ds.count()
             total_duplicate_count = nd_duplicates
@@ -149,7 +150,6 @@ if __name__ == "__main__":
                 
             # === Stage 2: CL ===
             logger.info("Running CL step...")
-            from ray_tfidf_vec import run_cl_step_for_workflow
 
             # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
             start_time = time.time()
@@ -159,6 +159,7 @@ if __name__ == "__main__":
             workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
 
         elif args.workflow == "cl_nd":
+            clustered_ds = run_cl_step_for_workflow(ray_df, cfg)
             assert False, "Not implemented"
 
         else:
