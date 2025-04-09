@@ -418,7 +418,7 @@ import glob
 import sys
 def minhash_lsh(args):
 
-    if not args.mock:
+    if hasattr(args, 'mock') and not args.mock:
         if args.use_ray:
             import ray
             import raydp
@@ -567,7 +567,8 @@ def run_nd_step_for_workflow(args):
         "num_perm": args.num_perm,
         "ngram_size": args.ngram_size,
         "min_ngram_size": args.min_ngram_size,
-        "column": args.column
+        "column": args.column,
+        "mock": False  # Add the missing attribute
     })
     
     # Convert to Ray dataset
