@@ -621,7 +621,8 @@ def run_nd_step_for_workflow(args):
     import time
     import glob
     import logging
-    from pyspark.sql import SparkSession, SparkConf
+    from pyspark import SparkConf
+    from pyspark.sql import SparkSession
     
     logger = logging.getLogger(__name__)
     start_time = time.time()
