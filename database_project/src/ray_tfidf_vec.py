@@ -416,7 +416,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
         ).remote(
                 cfg, ds
         )
-        ray.get(models_s1_ref)
+        # ray.get(models_s1_ref)
         print(f"Models fitted and serialized.")
     else:
         models_s1_ref = ray.put(_fit_models_remote(cfg, ds))
