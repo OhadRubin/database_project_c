@@ -368,7 +368,7 @@ def _fit_models_remote(
     return vectorizer, kmeans
 
 @ray.remote
-def fit_models_remote(ds, cfg):
+def fit_models_remote(cfg, ds):
     return _fit_models_remote(cfg, ds)
 
 
