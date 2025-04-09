@@ -28,16 +28,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 # --- Import Modified Core Logic Functions ---
 # These functions are assumed to be modified to handle in-memory Ray Datasets
 # and avoid intermediate disk writes between ND and CL steps.
-try:
-    from database_project.src.minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
-    from database_project.src.ray_tfidf_vec import (
-        read_config,
-        run_clustering_pipeline
-    )
-except ImportError as e:
-    print(f"Error importing core workflow functions: {e}")
-    print("Ensure modified functions exist in minhash.py and ray_tfidf_vec.py")
-    sys.exit(1)
+from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
+from ray_tfidf_vec import (
+    read_config,
+    run_clustering_pipeline
+)
+
 
 # --- Import Benchmarking DB Logic ---
 try:
