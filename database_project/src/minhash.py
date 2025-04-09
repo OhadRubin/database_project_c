@@ -417,6 +417,11 @@ def get_total_size_gb(files):
 import glob
 import sys
 def minhash_lsh(args):
+    # Initialize variables that need to be returned
+    num_nodes = 1  # Default value
+    record_count = 0
+    duplicate_count = 0
+    total_time = 0
 
     if hasattr(args, 'mock') and not args.mock:
         if args.use_ray:
