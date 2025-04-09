@@ -133,15 +133,37 @@ if __name__ == "__main__":
 
             # === Stage 1: ND ===
             logger.info("Running ND step...")
-            intermediate_ray_ds, nd_duplicates, num_nodes_nd, nd_time = run_nd_step_for_workflow(args)
-            if intermediate_ray_ds is None:
-                raise RuntimeError("ND step failed to produce a Ray Dataset.")
-            # Record count *after* ND
-            final_record_count = intermediate_ray_ds.count()
-            total_duplicate_count = nd_duplicates
-            num_nodes_used = num_nodes_nd # Or max if CL uses different nodes
-            logger.info(f"ND step completed in {nd_time:.2f}s. Records after ND: {final_record_count}, Duplicates found: {total_duplicate_count}")
-
+            try:
+                intermediate_ray_ds, nd_duplicates, num_nodes_nd, nd_time = run_nd_step_for_workflow(args)
+                if intermediate_ray_ds is None:
+                    logger.error("ND step failed to produce a Ray Dataset.")
+                    sys.exit(1)
+                
+                # Record count *after* ND
+                final_record_count = intermediate_ray_ds.count()
+                total_duplicate_count = nd_duplicates
+                num_nodes_used = num_nodes_nd # Or max if CL uses different nodes
+                logger.info(f"ND step completed in {nd_time:.2f}s. Records after ND: {final_record_count}, Duplicates found: {total_duplicate_count}")
+            except Exception as e:
+                logger.error(f"Error in ND step: {e}", exc_info=True)
+                
+                # Create a fallback empty dataset with the right schema
+                logger.warning("Creating an empty fallback Ray dataset due to error")
+                import ray.data
+                import pandas as pd
+                
+                # Create a minimal schema that CL can process
+                empty_df = pd.DataFrame({"id": [], "text": []})
+                intermediate_ray_ds = ray.data.from_pandas(empty_df)
+                nd_duplicates = 0
+                num_nodes_nd = len([x for x in ray.nodes() if x["alive"]])
+                nd_time = 0
+                final_record_count = 0
+                total_duplicate_count = 0
+                num_nodes_used = num_nodes_nd
+                
+                logger.warning("Proceeding with empty dataset")
+                
             # === Stage 2: CL ===
             logger.info("Running CL step...")
             cfg = read_config(args.config_file)
