@@ -29,13 +29,20 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 # --- Import Modified Core Logic Functions ---
 # These functions are assumed to be modified to handle in-memory Ray Datasets
 # and avoid intermediate disk writes between ND and CL steps.
-from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
-from ray_tfidf_vec import (
-    read_config,
-    run_cl_step_for_workflow
-)
 
 
+
+
+from ml_collections import config_dict
+import yaml
+
+
+
+def read_config(path):
+    with open(path) as f:
+        config_data = yaml.safe_load(f)
+        cfg = config_dict.ConfigDict(config_data)
+    return cfg
 
 # --- Logging Setup ---
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -134,6 +141,8 @@ if __name__ == "__main__":
             logger.info("Executing ND -> CL workflow...")
             # === Stage 1: ND ===
             logger.info("Running ND step...")
+            
+            from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
             intermediate_ray_ds, nd_duplicates, nd_time = run_nd_step_for_workflow(ray_df, args)
             final_record_count = intermediate_ray_ds.count()
             total_duplicate_count = nd_duplicates
@@ -141,6 +150,7 @@ if __name__ == "__main__":
                 
             # === Stage 2: CL ===
             logger.info("Running CL step...")
+            from ray_tfidf_vec import run_cl_step_for_workflow
 
             # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
             start_time = time.time()
