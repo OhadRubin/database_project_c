@@ -1,7 +1,3 @@
-
-
-
-
 from itertools import tee
 from logging import Logger
 from typing import Iterable
@@ -513,4 +509,72 @@ def minhash_lsh(args):
         record_count=0
         total_time=0
     return record_count, total_time, num_nodes, duplicate_count
+    
+def run_nd_step_for_workflow(args):
+    """
+    Run the Near-Duplicate detection step and return a Ray dataset.
+    
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Arguments containing input_file, threshold, num_perm, ngram_size, 
+        min_ngram_size, column, limit_files, and use_ray.
+        
+    Returns
+    -------
+    Tuple[ray.data.Dataset, int, int, float]
+        A tuple containing:
+        - ray_dataset: The Ray dataset after deduplication
+        - dupe_count: Number of duplicates removed
+        - num_nodes: Number of nodes used
+        - execution_time: Time taken to execute the ND step
+    """
+    import ray
+    import time
+    import glob
+    from pyspark.sql import SparkSession
+    
+    start_time = time.time()
+    
+    # Get the files
+    input_files = glob.glob(args.input_file)
+    if args.limit_files:
+        input_files = input_files[:args.limit_files]
+    
+    if not input_files:
+        raise ValueError(f"No files found matching pattern: {args.input_file}")
+    
+    # Set up Spark with Ray if requested
+    if args.use_ray:
+        import raydp
+        num_nodes = len([n for n in ray.nodes() if n["alive"]])
+        spark = raydp.init_spark(
+            app_name="ND-Step-Workflow",
+            num_executors=num_nodes * 4,
+            executor_cores=6,
+            executor_memory="10g"
+        )
+    else:
+        # Regular Spark setup
+        conf = SparkConf().setAppName("ND-Step-Workflow")
+        spark = SparkSession.builder.config(conf=conf).getOrCreate()
+        num_nodes = 1  # Default for local mode
+    
+    # Run the minhash LSH deduplication
+    result_df, duplicate_count = minhash_lsh({
+        "input_file": input_files,
+        "threshold": args.threshold,
+        "num_perm": args.num_perm,
+        "ngram_size": args.ngram_size,
+        "min_ngram_size": args.min_ngram_size,
+        "column": args.column
+    })
+    
+    # Convert to Ray dataset
+    import ray.data
+    ray_dataset = ray.data.from_spark(result_df)
+    
+    execution_time = time.time() - start_time
+    
+    return ray_dataset, duplicate_count, num_nodes, execution_time
     
