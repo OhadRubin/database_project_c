@@ -414,6 +414,10 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
     ).remote(
             cfg, ds
     )
+    ray.get(models_s1_ref)
+    print(f"Models fitted and serialized.")
+    
+    
 
 
     emb_tagged_ds_A = ds.map_batches(
