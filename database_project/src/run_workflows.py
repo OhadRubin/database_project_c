@@ -120,7 +120,7 @@ if __name__ == "__main__":
     # --- Initialize Ray ---
     # Needs careful handling if Spark also uses RayDP
     import ray
-    ray.init(address='auto')
+    ray.init(address='auto', log_to_driver=False)
     num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
     
     cfg = read_config(args.config_file)
