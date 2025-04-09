@@ -1,19 +1,29 @@
 import os
+
+os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
+os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
+
 import sys
-import time
-import glob
-import argparse
-import logging
-import yaml
-from ml_collections import config_dict
 
-# --- Environment Setup (Keep as needed) ---
-# os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
-# os.environ["PYSPARK_DRIVER_PYTHON"] = "/usr/bin/python3.10"
-
-# --- Add project root to Python path ---
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+# Add project root to Python path
+project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
 sys.path.insert(0, project_root)
+from itertools import tee
+from logging import Logger
+from typing import Iterable
+from typing import List
+from typing import Tuple
+
+import numpy as np
+from pyspark import SparkConf
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+from scipy.integrate import quad as integrate
+import glob
+import time
+import logging
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 
 # --- Import Modified Core Logic Functions ---
 # These functions are assumed to be modified to handle in-memory Ray Datasets
@@ -21,8 +31,6 @@ sys.path.insert(0, project_root)
 try:
     from database_project.src.minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
     from database_project.src.ray_tfidf_vec import (
-        run_cl_step_for_workflow, # Takes (ray_dataset, cfg, out_path), returns (out_path, time)
-        run_cl_nd_integrated_workflow, # Takes (args, cfg), returns (out_path, time, final_count, dupe_count, nodes)
         read_config,
         run_clustering_pipeline
     )
@@ -166,7 +174,11 @@ if __name__ == "__main__":
         if args.workflow == 'cl_nd':
              benchmark_notes += f" (CL Cfg: {os.path.basename(args.config_file)})"
 
-
+        from src.db import init_db, get_session, BenchmarkRun
+        
+        engine = init_db()
+        session = get_session(engine)
+        
         benchmark_run = BenchmarkRun.create_from_args(
             session=session,
             args=args,
@@ -177,7 +189,7 @@ if __name__ == "__main__":
             num_nodes=num_nodes_used,              # Max nodes used during the workflow
             notes=benchmark_notes,
             limit_files=args.limit_files,          # Log the limit used
-            total_size_gb=total_size_gb            # Log calculated size
+            total_size_gb=0            # Log calculated size
         )
         logger.info(f"Benchmark data saved with ID: {benchmark_run.id}")
 
