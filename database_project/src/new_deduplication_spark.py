@@ -99,7 +99,7 @@ def create_parser():
 
 # --- Main Execution Logic ---
 if __name__ == "__main__":
-    args = create_parser()
+    args = create_parser().parse_args()
     workflow_start_time = time.time()
     logger.info(f"Starting workflow: {args.workflow}")
 
@@ -157,7 +157,9 @@ if __name__ == "__main__":
             # === Integrated CL + ND ===
             cfg = read_config(args.config_file)
             # Pass args needed by the integrated function (input, output, ND params etc.)
+            
             # cfg.args = args
+            
             final_output_path, wf_time, final_record_count, total_duplicate_count, num_nodes_clnd = run_cl_nd_integrated_workflow(args, cfg)
             num_nodes_used = num_nodes_clnd
             # workflow_total_time = wf_time # Use time reported by function
