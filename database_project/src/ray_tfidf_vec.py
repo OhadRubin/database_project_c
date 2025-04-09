@@ -440,6 +440,8 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
 
 def stage1(ds: ray.data.Dataset, cfg: object):
     start_time = time.time()
+    print(f"Schema:", ds.schema())
+    print(f"Sample row:", ds.take(1))
     tagged_ds_A = fit_predict(ds, cfg).materialize()
 
     end_time = time.time()
