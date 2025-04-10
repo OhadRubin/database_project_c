@@ -608,7 +608,7 @@ class RayBTSMinhashDeduplicator:
         return samples.select(columns_to_keep).filter(mask)
 
     def run(self, dataset, **kwargs):
-        dataset = dataset.repartition(1000)
+        # dataset = dataset.repartition(1000)
         start_time = time.time()
         id_generator = IdGenerator.remote()
 
