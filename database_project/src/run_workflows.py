@@ -122,6 +122,7 @@ if __name__ == "__main__":
     # Needs careful handling if Spark also uses RayDP
     import ray
     ray.init(address='auto', 
+             dashboard_host="0.0.0.0"
             #  log_to_driver=False
              )
     num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
@@ -148,7 +149,7 @@ if __name__ == "__main__":
             total_duplicate_count = nd_duplicates
             
             os.makedirs(f"{cfg.base_dir}/ray_output_nd_step", exist_ok=True)
-            intermediate_ray_ds.repartition(100)
+            intermediate_ray_ds = intermediate_ray_ds.repartition(100)
 
             intermediate_ray_ds.write_parquet(
                 f"{cfg.base_dir}/ray_output_nd_step" ,

@@ -103,6 +103,19 @@ def tokenize(content: str, ngram_size: int, min_ngram_size: int) -> Set[str]:
     return tokens
 
 
+def jaccard_hash(hashvalues_a, hashvalues_b) -> float:
+    return float(np.count_nonzero(hashvalues_a == hashvalues_b)) / float(
+            len(hashvalues_a)
+        )
+
+
+
+
+def calculate_pair_similarity(doc_pair):
+    """Calculate Jaccard similarity between document pair."""
+    return jaccard_hash(doc_pair.doc1.hashvalues, doc_pair.doc2.hashvalues)
+
+
 def hash_content(content: str, num_perm: int, ngram_size: int, min_ngram_size: int, permutations: np.ndarray):
     hashvalues = np.ones(num_perm, dtype=np.uint64) * MAX_HASH
     tokens = tokenize(content, ngram_size, min_ngram_size)
@@ -115,37 +128,6 @@ def hash_content(content: str, num_perm: int, ngram_size: int, min_ngram_size: i
     )
     hashvalues = np.vstack([phv, hashvalues]).min(axis=0)
     return hashvalues
-
-
-
-
-def large_star_map(edge):
-    return [(edge[0], edge[1]), (edge[1], edge[0])]
-
-
-def large_star_reduce(group):
-    x, neighbors = group
-    nodes = [x] + list(neighbors)
-    minimum = min(nodes)
-    return [(n, minimum) for n in nodes if n > x]
-
-
-def small_star_map(edge):
-    x, y = edge
-    if y <= x:
-        return (x, y)
-    else:
-        return (y, x)
-
-
-def small_star_reduce(group):
-    x, neighbors = group
-    nodes = [x] + list(neighbors)
-    minimum = min(nodes)
-    return [(n, minimum) for n in nodes if n != minimum]
-
-
-
 
 def generate_hash_values(
     content: str,
@@ -186,6 +168,74 @@ def generate_hash_values(
     
     Hs = [bytes(hashvalues[start:end].byteswap().data) for start, end in hashranges]
     return [(band_idx, H, idx) for band_idx, H in enumerate(Hs)]
+
+
+def large_star_map(edge):
+    return [(edge[0], edge[1]), (edge[1], edge[0])]
+
+
+def large_star_reduce(group):
+    x, neighbors = group
+    nodes = [x] + list(neighbors)
+    minimum = min(nodes)
+    return [(n, minimum) for n in nodes if n > x]
+
+
+def small_star_map(edge):
+    x, y = edge
+    if y <= x:
+        return (x, y)
+    else:
+        return (y, x)
+
+
+def small_star_reduce(group):
+    x, neighbors = group
+    nodes = [x] + list(neighbors)
+    minimum = min(nodes)
+    return [(n, minimum) for n in nodes if n != minimum]
+
+def deduplicate(spark, edges, df):
+    a = edges
+    while True:
+        b = (
+            a.flatMap(large_star_map)
+            .groupByKey()
+            .flatMap(large_star_reduce)
+            .distinct()
+            .cache()
+        )
+        a = (
+            b.map(small_star_map)
+            .groupByKey()
+            .flatMap(small_star_reduce)
+            .distinct()
+            .cache()
+        )
+        changes = a.subtract(b).union(b.subtract(a)).collect()
+        if len(changes) == 0:
+            break
+
+    results = a.collect()
+    if len(results) == 0:
+        print("No components found.")
+        return df, 0
+        
+    # Count the distinct duplicate groups
+    duplicate_sets = len(set(r[1] for r in results))
+    print(f"Found {duplicate_sets} distinct duplicate sets")
+
+    components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
+        ["component", "__id__"]
+    )
+    components.show()
+    df = df.join(components, on="__id__", how="left")
+    deduplicated_df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
+    duplicates_count = df.count() - deduplicated_df.count()
+    return deduplicated_df, duplicates_count
+
+
+
 
 
 def optimal_param(
@@ -253,6 +303,12 @@ def optimal_param(
     return opt
 
 
+
+
+
+
+
+
 def generate_edges(nodes: List[int]) -> List[Tuple[int, int]]:
     """
     Generate edges from a cluster. Instead of generating N^2 edges, we only need all nodes align to a single node, since
@@ -273,60 +329,6 @@ def generate_edges(nodes: List[int]) -> List[Tuple[int, int]]:
 
     min_node = min(nodes)
     return [(n, min_node) for n in nodes if n != min_node]
-
-
-def jaccard_hash(hashvalues_a, hashvalues_b) -> float:
-    return float(np.count_nonzero(hashvalues_a == hashvalues_b)) / float(
-            len(hashvalues_a)
-        )
-
-
-
-
-def calculate_pair_similarity(doc_pair):
-    """Calculate Jaccard similarity between document pair."""
-    return jaccard_hash(doc_pair.doc1.hashvalues, doc_pair.doc2.hashvalues)
-
-def deduplicate(spark,edges, df):
-    a = edges
-    while True:
-        b = (
-            a.flatMap(large_star_map)
-            .groupByKey()
-            .flatMap(large_star_reduce)
-            .distinct()
-            .cache()
-        )
-        a = (
-            b.map(small_star_map)
-            .groupByKey()
-            .flatMap(small_star_reduce)
-            .distinct()
-            .cache()
-        )
-        changes = a.subtract(b).union(b.subtract(a)).collect()
-        if len(changes) == 0:
-            break
-
-    results = a.collect()
-    if len(results) == 0:
-        print("No components found.")
-        return df, 0
-        
-    # Count the distinct duplicate groups
-    duplicate_sets = len(set(r[1] for r in results))
-    print(f"Found {duplicate_sets} distinct duplicate sets")
-
-    components = spark.createDataFrame(results, schema=["__id__", "component"]).sort(
-        ["component", "__id__"]
-    )
-    components.show()
-    df = df.join(components, on="__id__", how="left")
-    deduplicated_df = df.filter(F.col("component").isNull()).drop("__id__", "component").cache()
-    duplicates_count = df.count() - deduplicated_df.count()
-    return deduplicated_df, duplicates_count
-
-
 
 
 # Create a reference to the tfidf_minhash function that we'll use later
