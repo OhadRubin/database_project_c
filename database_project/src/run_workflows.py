@@ -148,7 +148,7 @@ if __name__ == "__main__":
             intermediate_ray_ds = intermediate_ray_ds.repartition(1000).materialize()
 
 
-            cfg.should_dedup = False
+            cfg.base_stage.should_dedup = False
             # === Stage 2: CL ===
             logger.info("Running CL step...")
             start_time = time.time()
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
         elif args.workflow == "cl_nd":
             # Set the deduplication flag for this workflow
-            cfg.should_dedup = True
+            cfg.base_stage.should_dedup = True
             
             # === Stage 1+2: CL+ND ===
             logger.info("Running CL step...")
