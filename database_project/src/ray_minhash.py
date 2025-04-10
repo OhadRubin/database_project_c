@@ -627,7 +627,7 @@ class RayBTSMinhashDeduplicator:
             minhash_with_uid,
             batch_format='pyarrow',
             zero_copy_batch=True,
-            num_cpus=4,
+            num_cpus=3,
             batch_size=self.hashing_batch_size,
             # concurrency=(4,10),
             # num_cpus=4,
