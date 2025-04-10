@@ -72,7 +72,7 @@ def run_benchmark(args, dedup_args):
     session = get_session(engine)
     
     # Parse deduplication args
-    from database_project.src.deduplication_spark import create_parser
+    from old.deduplication_spark import create_parser
     dedup_parser = create_parser()
     dedup_args_ns = dedup_parser.parse_args(dedup_args)
     

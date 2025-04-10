@@ -145,16 +145,13 @@ if __name__ == "__main__":
             
             intermediate_ray_ds, nd_duplicates, nd_time = run_nd_step_for_workflow(ray_df, args)
             final_record_count = intermediate_ray_ds.count()
-            total_duplicate_count = nd_duplicates
-            
+            total_duplicate_count = nd_duplicates 
             intermediate_ray_ds = intermediate_ray_ds.repartition(1000).materialize()
 
 
                 
             # === Stage 2: CL ===
             logger.info("Running CL step...")
-
-            # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
             start_time = time.time()
             clustered_ds = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
             cl_time = time.time() - start_time
@@ -203,11 +200,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     finally:
-        # Optional: Shutdown Ray if this script was the main driver
-        # Be cautious if running within a larger Ray application/cluster
-        # if ray.is_initialized():
-        #     logger.info("Shutting down Ray...")
-        #     ray.shutdown()
         pass
 
     logger.info(f"Workflow {args.workflow} completed successfully.")

@@ -391,8 +391,6 @@ class KMeansInferenceModel:
         ):
         _, kmeans = ray.get(kmeans_ref)
         self.kmeans = kmeans
-        # os.system("sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)")
-        # time.sleep(10)
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=cfg.kmeans.inference.batch_size)
         self.cluster_col_name = cfg.cluster_col_name
 
@@ -407,21 +405,15 @@ os.makedirs("/mnt/gcs_bucket/ray_clustering_output/ray_output_final_clustered", 
 
 
 def fit_predict(ds: ray.data.Dataset, cfg: object):
+    models_s1_ref = fit_models_remote.options(
+            num_cpus=cfg.tfidf.train.num_cpus,
+            resources={"TPU-v4-8-head": 1},
+    ).remote(
+            cfg, ds
+    )
+    # ray.get(models_s1_ref)
+    print(f"Models fitted and serialized.")
     print(f"--- {cfg.pretty_name} Starting ---")
-    if True:
-        models_s1_ref = fit_models_remote.options(
-                num_cpus=cfg.tfidf.train.num_cpus,
-                resources={"TPU-v4-8-head": 1},
-        ).remote(
-                cfg, ds
-        )
-        # ray.get(models_s1_ref)
-        print(f"Models fitted and serialized.")
-    else:
-        models_s1_ref = ray.put(_fit_models_remote(cfg, ds))
-        print(f"Models fitted and serialized.")
-    
-    
 
 
     emb_tagged_ds_A = ds.map_batches(
@@ -444,21 +436,15 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
         fn_constructor_kwargs={"kmeans_ref": models_s1_ref,
                                "cfg": cfg},
     )
-    # print(f"Schema after KMeansInferenceModel:", tagged_ds_A.schema())
-    # print(f"Sample row after KMeansInferenceModel:", tagged_ds_A.take(1))
 
     return tagged_ds_A
 
 def stage1(ds: ray.data.Dataset, cfg: object):
     start_time = time.time()
-    # print(f"Schema:", ds.schema())
-    # print(f"Sample row:", ds.take(1))
     tagged_ds_A = fit_predict(ds, cfg).materialize()
 
     end_time = time.time()
     print(f"{cfg.pretty_name} complete. Time taken: {end_time - start_time:.2f} seconds")
-    # print(f"Schema:", tagged_ds_A.schema())
-    # print(f"Sample row after {cfg.pretty_name}:", tagged_ds_A.take(1))
     return tagged_ds_A
     
     
@@ -557,13 +543,8 @@ def run_cl_step_for_workflow(ds, cfg: object):
     
     final_ds:ray.data.Dataset = final_ds.repartition(40)
     
-    # print(f"Final dataset successfully written to {output_base_path}")
     return final_ds.materialize()
-    # final_ds.write_parquet(
-    #     output_base_path,
-    #     partition_cols=partition_cols,
-    # )
-    # print("--- Pipeline Finished ---")
+
 
     
 

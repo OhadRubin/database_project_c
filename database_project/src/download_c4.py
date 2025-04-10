@@ -1,16 +1,10 @@
-import requests
-# from pyspark import SparkFiles
-# from pyspark import SparkContext
-# from pyspark.sql import SparkSession
+
 import httpx
 import asyncio
 from pathlib import Path
-# python3.10 database_project/src/download_c4.py
-# spark = SparkSession.builder.appName("read_json") \
-#     .config("spark.local.dir", "/dev/shm/pyspark_dir") \
-#     .getOrCreate()
 
-# Option 1: Download using requests and then read
+
+
 url_template = 'https://huggingface.co/datasets/allenai/c4/resolve/1ddc917116b730e1859edef32896ec5c16be51d0/en/c4-train.{index:05d}-of-01024.json.gz'
 
 files_to_download = [url_template.format(index=i) for i in range(40)]
@@ -54,11 +48,6 @@ start_time = time.time()
 
 local_file = asyncio.run(download_files_in_batches(files_to_download))
 
-# Read from local file
-# df = spark.read.json(local_file)
-
-# Example: Display first few rows
-# df.show(5)
 
 end_time = time.time()
 print(f"Total execution time: {end_time - start_time:.2f} seconds")
