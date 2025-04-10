@@ -14,7 +14,6 @@ from typing import Iterable
 from typing import List
 from typing import Tuple
 
-from pyspark.sql import functions as F
 from scipy.integrate import quad as integrate
 import glob
 import time
@@ -148,7 +147,6 @@ if __name__ == "__main__":
             final_record_count = intermediate_ray_ds.count()
             total_duplicate_count = nd_duplicates
             
-            os.makedirs(f"{cfg.base_dir}/ray_output_nd_step", exist_ok=True)
             intermediate_ray_ds = intermediate_ray_ds.repartition(100)
 
 

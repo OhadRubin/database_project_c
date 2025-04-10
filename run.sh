@@ -3,17 +3,17 @@
 # log the start time
 START_TIME=$(date +%s)
 
-# Check if Java is installed, if not install it
-if ! command -v java &> /dev/null; then
-    echo "Java not found, installing..."
-    sudo apt-get install default-jdk -y
+# # Check if Java is installed, if not install it
+# if ! command -v java &> /dev/null; then
+#     echo "Java not found, installing..."
+#     sudo apt-get install default-jdk -y
     
-else
-    echo "Java is already installed"
-fi
+# else
+#     echo "Java is already installed"
+# fi
 
-python3.10 -m pip install pyspark
-python3.10 -m pip install raydp
+# python3.10 -m pip install pyspark
+# python3.10 -m pip install raydp
 python3.10 -m pip install ray==2.43.0 numpy~=1.0
 if [ ! -d "~/database_project_c" ]; then
     git clone https://github.com/OhadRubin/database_project_c

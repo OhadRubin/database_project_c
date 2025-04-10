@@ -14,7 +14,6 @@ from sklearn.pipeline import Pipeline
 import os
 import numpy as np
 import pandas as pd # Used for type hints, not core logic
-from pyspark.sql import functions as F
 import logging
 import math
 import time
@@ -558,7 +557,7 @@ def run_cl_step_for_workflow(ds, cfg: object):
     final_ds:ray.data.Dataset = final_ds.repartition(40)
     
     # print(f"Final dataset successfully written to {output_base_path}")
-    return final_ds
+    return final_ds.materialize()
     # final_ds.write_parquet(
     #     output_base_path,
     #     partition_cols=partition_cols,
