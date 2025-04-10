@@ -720,7 +720,7 @@ def main():
         jaccard_threshold=0.7,
         num_bands=None,
         num_rows_per_band=None,
-        union_find_parallel_num='auto',
+        union_find_parallel_num=400,
         union_threshold=256,
         max_pending_edge_buffer_task=20,
         num_edge_buffer_task_returns=10,
