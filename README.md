@@ -126,3 +126,57 @@ The following commands were used for the experiments processing 40 C4 files (~11
     *   **Output:** X achieves global deduplication, resulting in a smaller final dataset (higher retention means fewer duplicates removed). X only guarantees uniqueness *within* clusters, leading to a larger final dataset as inter-cluster duplicates are missed. The choice depends on the application's requirement for global vs. local uniqueness.
     *   **Trade-offs:** X provides stronger deduplication guarantees potentially faster. X might be considered if NDD is extremely expensive and most duplicates are expected within clusters, *and* global uniqueness is not strictly required, but our results didn't show a performance benefit here.
     *   **Recommendation:** Based on this experiment, **X is recommended** as it was faster and provides global deduplication. 
+
+
+Additional list of potential experiments, categorized by the aspect they investigate:
+
+**1. Scalability Analysis:**
+
+*   **Experiment 1.1: Data Size Scaling:**
+    *   **Objective:** Evaluate how each workflow's performance scales as the input data volume increases.
+    *   **Procedure:** Run both ND->CL and CL->ND workflows on increasing subsets of the C4 dataset (e.g., using `limit_files` = 10, 20, 40, 80, 160 files, if feasible). Keep cluster size (e.g., 10 nodes) and algorithm parameters constant.
+    *   **Metrics:** Measure end-to-end execution time, final record count, and total duplicate count for each run.
+    *   **Analysis:** Plot Time vs. Data Size (GB or # Documents) for both workflows. Does one workflow exhibit better linearity or a lower slope? Does the relative performance difference change significantly with size? Analyze throughput (records/sec).
+
+*   **Experiment 1.2: Cluster Size Scaling (Weak Scaling):**
+    *   **Objective:** Evaluate how each workflow benefits from adding more computational resources while keeping the *per-node* workload roughly constant (or analyzing strong scaling with fixed total data size).
+    *   **Procedure:** Fix the total data size (e.g., 40 or 80 files). Run both workflows on varying numbers of cluster nodes (e.g., 2, 5, 10 nodes). Adjust data partitioning/parallelism settings potentially.
+    *   **Metrics:** Measure end-to-end execution time, final record count, duplicate count.
+    *   **Analysis:** Plot Time vs. Number of Nodes for both workflows. Calculate speedup. Does one workflow parallelize more effectively? Does CL->ND's nested parallelism benefit more or less than ND->CL's sequential parallelism?
+
+**2. Sensitivity to NDD Parameters:**
+
+*   **Experiment 2.1: Varying Similarity Threshold (`threshold`):**
+    *   **Objective:** Understand how the NDD strictness affects the performance and output of both workflows.
+    *   **Procedure:** Fix data size and cluster size. Run both workflows using different Jaccard similarity thresholds for the NDD step (e.g., 0.6, 0.7, 0.8, 0.9).
+    *   **Metrics:** Execution time, duplicate count, final record count.
+    *   **Analysis:** How does changing the threshold affect the *relative* time difference between workflows? Does a higher threshold (fewer candidates) make CL->ND comparatively faster? How significantly does the final record count differ between workflows at different thresholds?
+
+*   **Experiment 2.2: Varying Number of Permutations (`num_perm`):**
+    *   **Objective:** Assess the impact of MinHash signature fidelity on both workflows.
+    *   **Procedure:** Fix data size, cluster size, and threshold. Run both workflows using different numbers of permutations (e.g., 128, 256, 512).
+    *   **Metrics:** Execution time, duplicate count, final record count.
+    *   **Analysis:** How does `num_perm` affect performance (potentially increasing hashing time but maybe reducing candidate pairs) and output counts for each workflow?
+
+**3. Sensitivity to CL Parameters (Focus on Impact on CL->ND):**
+
+*   **Experiment 3.1: Varying Stage 1 Cluster Count (`k1`):**
+    *   **Objective:** Investigate how the initial clustering granularity impacts the CL->ND workflow's effectiveness and performance.
+    *   **Procedure:** Fix data size, cluster size, and NDD parameters. Run both workflows, but primarily analyze the CL->ND results while varying the number of Stage 1 clusters (e.g., `k1` = 5, 10, 20, 50). The ND->CL workflow's CL step will also be affected, providing a baseline CL time comparison.
+    *   **Metrics:** Execution time, duplicate count (especially for CL->ND), final record count, potentially cluster size distribution.
+    *   **Analysis:** Does increasing `k1` in CL->ND significantly decrease the *intra-cluster* duplicate count found (as duplicates might be split across more clusters)? How does `k1` affect the total runtime of CL->ND (trade-off between CL time and parallel NDD time)?
+
+**4. Output Quality Analysis (Requires Sampling/Ground Truth):**
+
+*   **Experiment 4.1: Duplicate Pair Accuracy (Requires Labeled Data):**
+    *   **Objective:** Go beyond simple counts and evaluate the *correctness* of the identified duplicates.
+    *   **Procedure:** Create or obtain a subset of the data with known ground-truth duplicate pairs. Run both workflows on this subset. Compare the set of duplicate *pairs* identified by each workflow against the ground truth.
+    *   **Metrics:** Precision, Recall, F1-score for duplicate pair detection.
+    *   **Analysis:** Does CL->ND suffer significantly lower Recall due to missing inter-cluster duplicates? Does it achieve higher Precision on the pairs it *does* find?
+
+*   **Experiment 4.2: Impact on Clustering Quality:**
+    *   **Objective:** Assess whether the order of operations affects the quality of the final clusters.
+    *   **Procedure:** Take the final output datasets from comparable ND->CL and CL->ND runs. Sample documents from the clusters.
+    *   **Metrics:** Calculate cluster quality metrics like Silhouette Score (requires embeddings, potentially recalculated on the final data) or analyze topic coherence qualitatively/using topic modeling on cluster samples.
+    *   **Analysis:** Does removing duplicates first (ND->CL) lead to "cleaner" or more coherent clusters compared to CL->ND where near-duplicates might remain within different Stage 2 clusters (if they fell into different Stage 1 clusters)?
+
