@@ -623,7 +623,8 @@ class RayBTSMinhashDeduplicator:
             minhash_with_uid,
             batch_format='pyarrow',
             zero_copy_batch=True,
-            num_cpus=1000,
+            concurrency=(4,10),
+            num_cpus=4,
         )
 
         end_time = time.time()
