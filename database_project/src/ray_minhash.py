@@ -623,7 +623,8 @@ class RayBTSMinhashDeduplicator:
             minhash_with_uid,
             batch_format='pyarrow',
             zero_copy_batch=True,
-        ).materialize()
+            num_cpus=1000,
+        )
 
         end_time = time.time()
         logger.info(f'MinHash time = {end_time - start_time}')
