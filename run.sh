@@ -14,7 +14,7 @@ fi
 
 python3.10 -m pip install pyspark
 python3.10 -m pip install raydp
-python3.10 -m pip install --upgrade ray
+python3.10 -m pip install ray==2.43.0 numpy~=1.0
 if [ ! -d "~/database_project_c" ]; then
     git clone https://github.com/OhadRubin/database_project_c
 fi
