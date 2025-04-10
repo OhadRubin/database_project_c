@@ -388,6 +388,7 @@ class RayBTSMinhashDeduplicator:
         max_pending_filter_tasks: Optional[int] = 20,
         num_filter_task_returns: Optional[int] = 10,
         merge_batch_size: Optional[int] = 1000,
+        hashing_batch_size: Optional[int] = 10000,
         **kwargs,
     ):
         """
@@ -440,6 +441,7 @@ class RayBTSMinhashDeduplicator:
         self.text_key = kwargs.get('text_key', 'text')
         # self.work_dir = kwargs.get('work_dir', None)
         self.batch_size = kwargs.get('batch_size', 1000)
+        self.hashing_batch_size = hashing_batch_size
         self.min_ngram_size = min_ngram_size
 
 
@@ -606,7 +608,8 @@ class RayBTSMinhashDeduplicator:
         return samples.select(columns_to_keep).filter(mask)
 
     def run(self, dataset, **kwargs):
-        dataset = dataset.repartition(1000)
+        # dataset_size = dataset.count()
+        # dataset = dataset.repartition(dataset_size//self.hashing_batch_size)
         # Ignore additional parameters like exporter, tracer, etc.
         start_time = time.time()
         id_generator = IdGenerator.remote()
@@ -625,12 +628,14 @@ class RayBTSMinhashDeduplicator:
             batch_format='pyarrow',
             zero_copy_batch=True,
             num_cpus=4,
+            batch_size=self.hashing_batch_size,
             # concurrency=(4,10),
             # num_cpus=4,
         ).materialize()
 
         end_time = time.time()
         logger.info(f'MinHash time = {end_time - start_time}')
+        
 
         start_time = time.time()
         self.merge()
@@ -667,7 +672,7 @@ def run_nd_step_for_workflow(ray_df, args):
         min_ngram_size=args.min_ngram_size,
         num_permutations=args.num_perm,
         jaccard_threshold=args.threshold,
-        union_find_parallel_num=400,
+        union_find_parallel_num="auto",
         union_threshold=256,
         max_pending_edge_buffer_task=20,
         num_edge_buffer_task_returns=10,
