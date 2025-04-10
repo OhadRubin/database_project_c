@@ -643,8 +643,36 @@ class RayBTSMinhashDeduplicator:
         return result
 
 
-def run_nd_step_for_workflow(ray_df, args):
+
+def dedup(ray_df, cfg):
+    import logging
+    logger = logging.getLogger(__name__)
     
+    original_count = ray_df.count()
+    logger.info(f"Cluster deduplication: starting with {original_count} records")
+    
+    import time
+    start_time = time.time()
+    
+    # Use same parameters from args but through cfg
+    deduplicator = RayBTSMinhashDeduplicator(
+        text_key=cfg.args.column,
+        ngram_size=cfg.args.ngram_size,
+        min_ngram_size=cfg.args.min_ngram_size,
+        num_permutations=cfg.args.num_perm,
+        jaccard_threshold=cfg.args.threshold,
+        union_find_parallel_num=400,
+        union_threshold=256,
+    )
+    deduplicated_dataset = deduplicator.run(ray_df).materialize()
+    
+    unique_count = deduplicated_dataset.count()
+    duplicate_count = original_count - unique_count
+    logger.info(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
+    
+    return deduplicated_dataset
+
+def run_nd_step_for_workflow(ray_df, args):
     import logging
     logger = logging.getLogger(__name__)
     

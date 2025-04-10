@@ -148,7 +148,7 @@ if __name__ == "__main__":
             intermediate_ray_ds = intermediate_ray_ds.repartition(1000).materialize()
 
 
-                
+            cfg.should_dedup = False
             # === Stage 2: CL ===
             logger.info("Running CL step...")
             start_time = time.time()
@@ -158,8 +158,16 @@ if __name__ == "__main__":
             workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
 
         elif args.workflow == "cl_nd":
+            # Set the deduplication flag for this workflow
+            cfg.should_dedup = True
+            
+            # === Stage 1+2: CL+ND ===
+            logger.info("Running CL step...")
+            start_time = time.time()
             clustered_ds = run_cl_step_for_workflow(ray_df, cfg)
-            assert False, "Not implemented"
+            
+            
+            
 
         else:
             # Should not happen due to argparse choices

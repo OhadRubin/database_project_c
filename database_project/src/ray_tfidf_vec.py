@@ -447,8 +447,10 @@ def stage1(ds: ray.data.Dataset, cfg: object):
     print(f"{cfg.pretty_name} complete. Time taken: {end_time - start_time:.2f} seconds")
     return tagged_ds_A
     
-    
-
+from ray_minhash import dedup
+@ray.remote
+def dedup_remote(ds: ray.data.Dataset, cfg: object):
+    return dedup(ds, cfg).materialize()
 
 @ray.remote
 def fit_predict_remote(ds: ray.data.Dataset, cfg):
@@ -463,8 +465,11 @@ def stage2(ds: ray.data.Dataset, cfg: object):
     stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}") 
                        for cluster_id in range(stage1_clusters)]
     for ds in stage1_datasets:
-        ds_ref_list.append(fit_predict_remote.remote(ds, cfg))
+        ds_ref = fit_predict_remote.remote(ds, cfg)
+        if cfg.should_dedup:
+            ds_ref = dedup_remote.remote(ds_ref, cfg)
         time.sleep(20)
+        ds_ref_list.append(ds_ref)
     ds_list = ray.get(ds_ref_list)
     final_ds = ds_list[0]
     final_ds = final_ds.union(*ds_list[1:])
