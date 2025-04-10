@@ -670,7 +670,7 @@ def run_nd_step_for_workflow(ray_df, args):
         min_ngram_size=args.min_ngram_size,
         num_permutations=args.num_perm,
         jaccard_threshold=args.threshold,
-        union_find_parallel_num="auto",
+        union_find_parallel_num=400,
         union_threshold=256,
         max_pending_edge_buffer_task=20,
         num_edge_buffer_task_returns=10,
