@@ -147,7 +147,7 @@ if __name__ == "__main__":
             final_record_count = intermediate_ray_ds.count()
             total_duplicate_count = nd_duplicates
             
-            intermediate_ray_ds = intermediate_ray_ds.repartition(1000)
+            intermediate_ray_ds = intermediate_ray_ds.repartition(1000).materialize()
 
 
                 
