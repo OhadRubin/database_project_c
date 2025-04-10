@@ -1,14 +1,11 @@
+
+# Adapted from https://github.com/modelscope/data-juicer
 import ray
 import sys
 import logging
 import time
 import sys
 import os
-
-
-
-
-
 import os
 import time
 from typing import List, Optional, Union
@@ -315,7 +312,6 @@ class BTSUnionFind:
         return [idx for uid, idx in queries if uid in self.parent]
 
 
-# OP_NAME = 'ray_bts_minhash_deduplicator'
 from typing import Set, Iterable
 from itertools import tee
 
