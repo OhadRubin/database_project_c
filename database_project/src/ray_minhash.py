@@ -628,7 +628,7 @@ class RayBTSMinhashDeduplicator:
             batch_format='pyarrow',
             zero_copy_batch=True,
             num_cpus=3,
-            batch_size=self.hashing_batch_size,
+            batch_size=self.batch_size,
             # concurrency=(4,10),
             # num_cpus=4,
         ).materialize()
@@ -685,6 +685,7 @@ def run_nd_step_for_workflow(ray_df, args):
     logger.info(f"Total time taken: {total_time:.2f} seconds")
     execution_time = time.time() - start_time
     logger.info(f"Total execution time: {execution_time:.2f} seconds")
+    logger.info(f"Duplicate count: {duplicate_count}")
     return deduplicated_dataset, duplicate_count, execution_time
 
 
