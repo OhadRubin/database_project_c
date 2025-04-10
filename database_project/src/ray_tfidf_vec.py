@@ -527,6 +527,7 @@ def fake_stage1(ds, cfg):
 def run_cl_step_for_workflow(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     os.makedirs(output_base_path, exist_ok=True)
+    ds = ds.repartition(1000)
     
 
         
