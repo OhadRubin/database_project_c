@@ -541,6 +541,7 @@ def run_cl_step_for_workflow(ds, cfg: object):
         ]):
         stage_cfg = base_cfg.copy_and_resolve_references()
         stage_cfg.update(stage)
+        stage_cfg.args = cfg.args
         print(stage_cfg)
         ds = func(ds, stage_cfg)
     
