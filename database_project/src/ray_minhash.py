@@ -669,7 +669,7 @@ def run_nd_step_for_workflow(ray_df, args):
         num_edge_buffer_task_returns=10,
         max_pending_filter_tasks=20,
         num_filter_task_returns=10,
-        merge_batch_size=1000,
+        merge_batch_size=100,
     )
     deduplicated_dataset = deduplicator.run(ray_df).materialize()
     total_time = time.time() - start_time

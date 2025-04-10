@@ -149,7 +149,7 @@ SCRIPT="python3.10 database_project/src/run_workflows.py --workflow nd_cl --inpu
 # Run only on head node
 if $IS_HEAD; then
     # for NUM_FILES in 1 5 10 20 30 40; do
-    for NUM_FILES in 10; do
+    for NUM_FILES in 40; do
         COMMAND="$SCRIPT --limit_files $NUM_FILES"
         rm -rf /dev/shm/c4_outputs 
         mkdir -p /dev/shm/c4_outputs
