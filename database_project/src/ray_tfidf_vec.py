@@ -432,8 +432,8 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
         concurrency=cfg.tfidf.inference.concurrency,
         fn_constructor_kwargs={"vectorizer_ref": models_s1_ref},
     )
-    print(f"Schema after TFIDFInferenceModel:", emb_tagged_ds_A.schema())
-    print(f"Sample row after TFIDFInferenceModel:", emb_tagged_ds_A.take(1))
+    # print(f"Schema after TFIDFInferenceModel:", emb_tagged_ds_A.schema())
+    # print(f"Sample row after TFIDFInferenceModel:", emb_tagged_ds_A.take(1))
     tagged_ds_A = emb_tagged_ds_A.map_batches(
         KMeansInferenceModel,
         batch_format="pandas",
@@ -444,8 +444,8 @@ def fit_predict(ds: ray.data.Dataset, cfg: object):
         fn_constructor_kwargs={"kmeans_ref": models_s1_ref,
                                "cfg": cfg},
     )
-    print(f"Schema after KMeansInferenceModel:", tagged_ds_A.schema())
-    print(f"Sample row after KMeansInferenceModel:", tagged_ds_A.take(1))
+    # print(f"Schema after KMeansInferenceModel:", tagged_ds_A.schema())
+    # print(f"Sample row after KMeansInferenceModel:", tagged_ds_A.take(1))
 
     return tagged_ds_A
 
