@@ -683,8 +683,8 @@ def run_nd_step_for_workflow(ray_df, args):
     logger.info(f"Total time taken: {total_time:.2f} seconds")
     execution_time = time.time() - start_time
     logger.info(f"Total execution time: {execution_time:.2f} seconds")
-    deduplicated_count = deduplicated_dataset.count()
-    duplicate_count = original_count - deduplicated_count
+    unique_count = deduplicated_dataset.count()
+    duplicate_count = original_count - unique_count
     logger.info(f"Duplicate count: {duplicate_count}")
     return deduplicated_dataset, duplicate_count, execution_time
 
