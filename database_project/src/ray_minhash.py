@@ -661,7 +661,7 @@ def dedup(ray_df, cfg):
         min_ngram_size=cfg.args.min_ngram_size,
         num_permutations=cfg.args.num_perm,
         jaccard_threshold=cfg.args.threshold,
-        union_find_parallel_num=400,
+        union_find_parallel_num=10,
         union_threshold=256,
     )
     deduplicated_dataset = deduplicator.run(ray_df).materialize()
