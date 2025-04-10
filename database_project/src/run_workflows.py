@@ -96,7 +96,6 @@ def create_parser():
 
     # --- Benchmarking ---
     parser.add_argument("--notes", type=str, default=None, help="Notes for benchmark DB entry")
-    parser.add_argument("--db_uri", type=str, default=None, help="Database URI (uses DB_URI env var or sqlite default if None)")
     # --implementation argument is now replaced by --workflow
     parser.add_argument(
         "--mock", type=bool, default=False, help="Mock the execution"
