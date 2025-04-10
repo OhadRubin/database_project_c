@@ -606,6 +606,7 @@ class RayBTSMinhashDeduplicator:
         return samples.select(columns_to_keep).filter(mask)
 
     def run(self, dataset, **kwargs):
+        dataset = dataset.repartition(1000)
         # Ignore additional parameters like exporter, tracer, etc.
         start_time = time.time()
         id_generator = IdGenerator.remote()
@@ -623,8 +624,8 @@ class RayBTSMinhashDeduplicator:
             minhash_with_uid,
             batch_format='pyarrow',
             zero_copy_batch=True,
-            concurrency=(4,10),
-            num_cpus=4,
+            # concurrency=(4,10),
+            # num_cpus=4,
         )
 
         end_time = time.time()
