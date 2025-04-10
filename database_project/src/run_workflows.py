@@ -21,7 +21,7 @@ import time
 import logging
 import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
+from ray_minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
 from ray_tfidf_vec import run_cl_step_for_workflow
 
 # --- Import Modified Core Logic Functions ---
@@ -151,23 +151,14 @@ if __name__ == "__main__":
             os.makedirs(f"{cfg.base_dir}/ray_output_nd_step", exist_ok=True)
             intermediate_ray_ds = intermediate_ray_ds.repartition(100)
 
-            intermediate_ray_ds.write_parquet(
-                f"{cfg.base_dir}/ray_output_nd_step" ,
-            )
-            ray.shutdown()
-            print("--- Pipeline Finished ---")
-            ray.init(address='auto', 
-            #  log_to_driver=False
-             )
-            ray_ds = ray.data.read_parquet(f"{cfg.base_dir}/ray_output_nd_step")
-            
+
                 
             # === Stage 2: CL ===
             logger.info("Running CL step...")
 
             # final_output_path, cl_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg, args.output)
             start_time = time.time()
-            clustered_ds = run_cl_step_for_workflow(ray_ds, cfg)
+            clustered_ds = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
             cl_time = time.time() - start_time
             logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
             workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better

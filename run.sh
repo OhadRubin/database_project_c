@@ -50,7 +50,7 @@ RAY_EXEC="/home/$USER/.local/bin/ray"
 # Check if Ray is running
 if ! command -v $RAY_EXEC &> /dev/null; then
     echo "Ray not found, installing..."
-    python3.10 -m pip install ray
+    python3.10 -m pip install ray==2.43.0 numpy~=1.0
 fi
 
 

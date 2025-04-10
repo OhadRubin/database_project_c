@@ -30,20 +30,6 @@ import scipy.integrate as integrate
 
 # python3.10 -m pip install ray==2.43.0 numpy~=1.0
 
-def split_on_whitespace(document, new_line=False, tab=False):
-    """
-    This method also removes concatenated spaces.
-
-    :param document: document to be split
-    :param new_line: whether to split document with '\\\\n'
-    :param tag: whether to split document with '\\\\t'
-    :return: word list obtained after splitting document
-    """
-    sep = [' '] + new_line * ['\n'] + tab * ['\t']
-    sep = '|'.join(sep)
-    split_document = re.split(sep, document)
-    split_document = [word for word in split_document if word]
-    return split_document
 
 
 
@@ -330,8 +316,53 @@ class BTSUnionFind:
 
 
 # OP_NAME = 'ray_bts_minhash_deduplicator'
+from typing import Set, Iterable
+from itertools import tee
 
+NON_ALPHA = re.compile("[^A-Za-z_0-9]")
 
+def ngrams(sequence: List[str], n: int, min_ngram_size: int = 5) -> Iterable:
+    """
+    Code taken from NLTK, without padding.
+
+    Parameters
+    ----------
+    sequence : list
+        The sequence of items to be converted into n-grams.
+    n : int
+        The order of the n-grams to be extracted.
+    min_ngram_size : int
+        The minimum number of items in the sequence to generate n-grams.
+
+    Returns
+    -------
+    Iterable
+        The n-grams generated from the sequence.
+
+    Examples
+    --------
+    >>> list(ngrams(['a', 'b', 'c', 'd'], 2))
+    [('a', 'b'), ('b', 'c'), ('c', 'd')]
+    >>> list(ngrams(['a', 'b', 'c', 'd'], 3))
+    [('a', 'b', 'c'), ('b', 'c', 'd')]
+    """
+    if len(sequence) < min_ngram_size:
+        return []
+
+    iterables = tee(sequence, n)
+    for i, sub_iterable in enumerate(iterables):
+        for _ in range(i):
+            next(sub_iterable, None)
+    return zip(*iterables)
+
+def tokenize(content: str, ngram_size: int, min_ngram_size: int) -> Set[str]:
+    tokens = {
+        " ".join(t).encode("utf-8")
+        for t in ngrams(NON_ALPHA.split(content), ngram_size, min_ngram_size)
+    }
+    return tokens
+
+from functools import partial
 
 class RayBTSMinhashDeduplicator:
     """
@@ -344,10 +375,8 @@ class RayBTSMinhashDeduplicator:
 
     def __init__(
         self,
-        tokenization: str = 'space',
-        window_size: PositiveInt = 5,
-        lowercase: bool = True,
-        ignore_pattern: Optional[str] = None,
+        ngram_size: PositiveInt = 5,
+        min_ngram_size: PositiveInt = 5,
         num_permutations: PositiveInt = 256,
         jaccard_threshold: Annotated[float, Field(ge=0, le=1)] = 0.7,
         num_bands: Optional[PositiveInt] = None,
@@ -359,7 +388,6 @@ class RayBTSMinhashDeduplicator:
         max_pending_filter_tasks: Optional[int] = 20,
         num_filter_task_returns: Optional[int] = 10,
         merge_batch_size: Optional[int] = 1000,
-        *args,
         **kwargs,
     ):
         """
@@ -372,7 +400,7 @@ class RayBTSMinhashDeduplicator:
             to use 'character', and for multiple languages, we recommend
             to use 'sentencepiece'. If using 'sentencepiece', please
             provided the model path in the 'tokenizer_model' field.
-        :param window_size: window size of shingling
+        :param min_ngram_size: window size of shingling
         :param lowercase: whether to convert text to lower case first
         :param ignore_pattern: whether to ignore sub-strings with
             specific pattern when computing minhash
@@ -410,29 +438,13 @@ class RayBTSMinhashDeduplicator:
         :param tmp_file_name: the temporary folder name for deduplication.
         """
         self.text_key = kwargs.get('text_key', 'text')
-        self.work_dir = kwargs.get('work_dir', None)
+        # self.work_dir = kwargs.get('work_dir', None)
         self.batch_size = kwargs.get('batch_size', 1000)
-        self.tokenization = tokenization
-        self.window_size = window_size
-        self.lowercase = lowercase
-        self.ignore_pattern = ignore_pattern
-        if self.ignore_pattern:
-            self.ignore_pattern = regex.compile(self.ignore_pattern)
+        self.min_ngram_size = min_ngram_size
 
-        # check parameters
-        if self.ignore_pattern and self.tokenization == 'punctuation':
-            logger.warning('Be careful that tokenization with punctuations '
-                           'won\'t work if the ignore pattern includes '
-                           'punctuations.')
-        self.punctuation_pattern = regex.compile(r'\p{P}')
 
-        def tokenization_func(text):
-            tokens = split_on_whitespace(text)
-            return {
-                str.encode(' '.join(tokens[i:i + self.window_size]))
-                for i in range(len(tokens) - self.window_size)
-            }
-        self.tokenization_func = tokenization_func
+            
+        self.tokenization_func = partial(tokenize, ngram_size=ngram_size, min_ngram_size=min_ngram_size)
 
         # about deduplication
         self.num_permutation = num_permutations
@@ -504,10 +516,6 @@ class RayBTSMinhashDeduplicator:
 
         for text, uid in zip(text_list, uid_list):
             text = text.as_py()
-            if self.lowercase:
-                text = text.lower()
-            if self.ignore_pattern:
-                text = self.ignore_pattern.sub('', text)
 
             tokens = self.tokenization_func(text)
 
@@ -632,15 +640,48 @@ class RayBTSMinhashDeduplicator:
         return result
 
 
-def main():
-    # Initialize Ray with runtime environment to ensure data_juicer is available on all nodes
+def run_nd_step_for_workflow(ray_df, args):
+    duplicate_count = 0
+    total_time = 0
     
-    # runtime_env = {
-    #     "py_modules": [
-    #         "/home/ohadr/database_project_c/data-juicer/data_juicer"
-    #     ],
-    # }
-    # ray.init(runtime_env=runtime_env)
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"minhash_lsh called with args: {args}")
+
+
+    
+    original_count = ray_df.count()
+    logger.info(f"Original record count: {original_count}")
+    
+    import time
+    start_time = time.time()
+    
+    deduplicator = RayBTSMinhashDeduplicator(
+        text_key=args.column,
+        ngram_size=args.ngram_size,
+        min_ngram_size=args.min_ngram_size,
+        num_permutations=args.num_perm,
+        jaccard_threshold=args.threshold,
+        union_find_parallel_num='auto',
+        union_threshold=256,
+        max_pending_edge_buffer_task=20,
+        num_edge_buffer_task_returns=10,
+        max_pending_filter_tasks=20,
+        num_filter_task_returns=10,
+        merge_batch_size=1000,
+    )
+    deduplicated_dataset = deduplicator.run(ray_df).materialize()
+    total_time = time.time() - start_time
+    logger.info(f"Total time taken: {total_time:.2f} seconds")
+    execution_time = time.time() - start_time
+    logger.info(f"Total execution time: {execution_time:.2f} seconds")
+    return deduplicated_dataset, duplicate_count, execution_time
+
+
+
+def main():
+
     ray.init()
     
     # Set more detailed logging
@@ -668,11 +709,11 @@ def main():
     
     # Create Ray dataset
     dataset = from_pandas(sample_data)
-    os.makedirs('./ray_minhash_work_dir', exist_ok=True)
+    # os.makedirs('./ray_minhash_work_dir', exist_ok=True)
     deduplicator = RayBTSMinhashDeduplicator(
-        work_dir='./ray_minhash_work_dir',
+        # work_dir='./ray_minhash_work_dir',
         tokenization='space',
-        window_size=5,
+        min_ngram_size=5,
         lowercase=True,
         ignore_pattern=None,
         num_permutations=256,
