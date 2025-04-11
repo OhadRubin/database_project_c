@@ -474,29 +474,38 @@ def fit_predict_remote(ds: ray.data.Dataset, cfg):
     tagged_ds, train_time, inference_time = fit_predict(ds.materialize(), cfg)
     return tagged_ds.materialize(), train_time, inference_time
 
-def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, float, float, int, str]:
-    """Runs stage 2 clustering and optional deduplication, returns dataset, timings, dupe count, and distribution."""
-    stage2_start_time = time.time()
-    stage1_clusters = cfg.cluster_spec[0]
-    stage1_cluster_col_name = cfg.partition_cols[0]
+def stage_2(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
+
+def stage_3(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
+
+def stage_4(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
+
+def stage_n(ds: ray.data.Dataset, cfg: object):
+    """Runs clustering and optional deduplication, returns dataset, timings, dupe count, and distribution."""
+    stage_start_time = time.time()
+    prev_stage_clusters = cfg.cluster_spec[0]
+    prev_stage_cluster_col_name = cfg.partition_cols[0]
 
     og_ds = ds
-    stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}")
-                       for cluster_id in range(stage1_clusters)]
+    prev_stage_datasets = [og_ds.filter(expr=f"{prev_stage_cluster_col_name} == {cluster_id}")
+                       for cluster_id in range(prev_stage_clusters)]
 
-    processed_refs = [] # List of tuples: (final_ds_ref, train_time_ref, infer_time_ref, dupe_count_ref)
-    for ds_cluster_data in stage1_datasets:
+    processed_refs = []
+    for ds_cluster_data in prev_stage_datasets:
         # Stage 2 clustering always happens
-        s2_clustered_ds_ref, s2_train_time_ref, s2_infer_time_ref = fit_predict_remote.remote(ds_cluster_data, cfg)
+        clustered_ds_ref, train_time_ref, infer_time_ref = fit_predict_remote.remote(ds_cluster_data, cfg)
 
         # Conditional deduplication
         if cfg.should_dedup:
             # Call dedup_remote which now returns two refs
-            final_ds_ref, dupe_count_ref = dedup_remote.remote(s2_clustered_ds_ref, cfg)
-            processed_refs.append((final_ds_ref, s2_train_time_ref, s2_infer_time_ref, dupe_count_ref))
+            final_ds_ref, dupe_count_ref = dedup_remote.remote(clustered_ds_ref, cfg)
+            processed_refs.append((final_ds_ref, train_time_ref, infer_time_ref, dupe_count_ref))
         else:
             # If not deduping, store the clustered dataset ref and a 0 placeholder for count ref
-            processed_refs.append((s2_clustered_ds_ref, s2_train_time_ref, s2_infer_time_ref, ray.put(0)))
+            processed_refs.append((clustered_ds_ref, train_time_ref, infer_time_ref, ray.put(0)))
 
         time.sleep(20) # Consider if this sleep is still necessary/optimal - Removed for now
 
@@ -509,12 +518,12 @@ def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
     # Aggregate results
     ds_list = dataset_results # List of datasets
     total_cluster_duplicates = sum(count_results) # Sum the counts
-    total_train_time = np.mean(train_time_results) # Sum train times (might be misleading if parallel)
-    total_inference_time = np.mean(infer_time_results) # Sum inference times (might be misleading if parallel)
+    total_train_time = np.mean(train_time_results)
+    total_inference_time = np.mean(infer_time_results)
 
     # Union datasets (ensure ds_list is not empty)
     if not ds_list:
-        raise ValueError("No datasets returned from stage 2 processing.")
+        raise ValueError(f"No datasets returned from {cfg.pretty_name} processing.")
 
     final_ds = ds_list[0]
     if len(ds_list) > 1:
@@ -523,19 +532,22 @@ def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
     final_ds = final_ds.sort(cfg.partition_cols[:2]).materialize() # Materialize after union and sort
 
 
-    stage2_end_time = time.time()
-    stage2_time = stage2_end_time - stage2_start_time
-    print(f"{cfg.pretty_name} complete. Total Time: {stage2_time:.2f}s (Agg Train: {total_train_time:.2f}s, Agg Infer: {total_inference_time:.2f}s)")
-    print(f"Stage 2 Duplicates Found (if enabled): {total_cluster_duplicates}")
+    stage_end_time = time.time()
+    stage_time = stage_end_time - stage_start_time
+    print(f"{cfg.pretty_name} complete. Total Time: {stage_time:.2f}s (Agg Train: {total_train_time:.2f}s, Agg Infer: {total_inference_time:.2f}s)")
+    print(f"{cfg.pretty_name} Duplicates Found (if enabled): {total_cluster_duplicates}")
     
     metrics = {"inference_time": total_inference_time, "train_time": total_train_time, 
-               "total_time": stage2_time, "stage": cfg.name,
+               "total_time": stage_time, "stage": cfg.name,
                }
     if cfg.should_dedup:
         metrics["n_duplicates"] = total_cluster_duplicates
 
     return final_ds, metrics
 
+
+def stage_2(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
 
 
 
@@ -615,7 +627,7 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
 
     workflow_duplicate_count = 0 # Initialize count
     # --- Execute Stages ---
-    stage_functions = [stage1, stage2] # Define stage functions
+    stage_functions = [stage1, stage_2, stage_3, stage_4] # Define stage functions for all 4 stages
     metric_list = []
     for i, stage_config_data in enumerate(cfg.stages_list):
         func = stage_functions[i]
