@@ -122,7 +122,6 @@ if __name__ == "__main__":
     cl_train_time = 0.0
     cl_inference_time = 0.0
     cl_stage2_time = 0.0
-    cluster_size_dist_json = "[]"
     config_details_json = "{}"
 
     # --- Initialize Ray ---
@@ -210,7 +209,7 @@ if __name__ == "__main__":
             logger.info("Running CL step...")
             cl_start_time = time.time()
             # CL step now returns: ds, dupe_count(0), train_t, infer_t, stage2_t(0), dist_json
-            clustered_ds, _, cl_train_time, cl_inference_time, cl_stage2_time, cluster_size_dist_json = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
+            clustered_ds, _, cl_train_time, cl_inference_time, cl_stage2_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
             cl_end_time = time.time()
             logger.info(f"CL step completed in {cl_end_time - cl_start_time:.2f}s.")
             logger.info(f"  CL Train Time: {cl_train_time:.2f}s")
@@ -228,7 +227,7 @@ if __name__ == "__main__":
             logger.info("Running CL -> ND step...")
             cl_nd_start_time = time.time()
             # CL step now returns: ds, dupe_count, train_t, infer_t, stage2_t, dist_json
-            clustered_ds, cl_nd_duplicates, cl_train_time, cl_inference_time, cl_stage2_time, cluster_size_dist_json = run_cl_step_for_workflow(ray_df, cfg)
+            clustered_ds, cl_nd_duplicates, cl_train_time, cl_inference_time, cl_stage2_time = run_cl_step_for_workflow(ray_df, cfg)
             cl_nd_end_time = time.time()
 
             total_duplicate_count = cl_nd_duplicates # Assign the returned count
