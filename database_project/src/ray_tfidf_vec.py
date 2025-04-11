@@ -570,13 +570,7 @@ def run_cl_step_for_workflow(ds, cfg: object):
         stage_cfg.update(stage)
         stage_cfg.args = cfg.args
         print(stage_cfg)
-        # ds = func(ds, stage_cfg)
-        if func == stage2 and stage_cfg.should_dedup:
-            ds, stage_duplicates = func(ds, stage_cfg)
-            workflow_duplicate_count = stage_duplicates # Capture the total duplicates from stage2
-        else:
-            # For stage1 or stage2 without deduplication
-            ds = func(ds, stage_cfg)
+        ds, workflow_duplicate_count = func(ds, stage_cfg) #stage1 returns 0
     
     final_ds = ds.materialize()
     
