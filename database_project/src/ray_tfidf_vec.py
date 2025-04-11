@@ -460,7 +460,8 @@ def stage1(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
     end_time = time.time()
     print(f"{cfg.pretty_name} complete. Total Time: {end_time - start_time:.2f}s (Train: {train_time:.2f}s, Infer: {inference_time:.2f}s)")
     # Stage 1 doesn't have a separate "stage2_time", so return 0
-    return tagged_ds_A, train_time, inference_time, 0.0
+    metrics = {"inference_time": inference_time, "train_time": train_time, "total_time": end_time - start_time, "stage": cfg.name}
+    return tagged_ds_A, metrics
 
 from ray_minhash import dedup
 @ray.remote(num_returns=2)
@@ -508,8 +509,8 @@ def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
     # Aggregate results
     ds_list = dataset_results # List of datasets
     total_cluster_duplicates = sum(count_results) # Sum the counts
-    total_train_time = sum(train_time_results) # Sum train times (might be misleading if parallel)
-    total_inference_time = sum(infer_time_results) # Sum inference times (might be misleading if parallel)
+    total_train_time = np.mean(train_time_results) # Sum train times (might be misleading if parallel)
+    total_inference_time = np.mean(infer_time_results) # Sum inference times (might be misleading if parallel)
 
     # Union datasets (ensure ds_list is not empty)
     if not ds_list:
@@ -521,17 +522,19 @@ def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
 
     final_ds = final_ds.sort(cfg.partition_cols[:2]).materialize() # Materialize after union and sort
 
-    # # Calculate cluster size distribution
-    # cluster_cols = cfg.partition_cols[:2] # Assuming max 2 stages for distribution
-    # counts_df = final_ds.groupby(cluster_cols).count().to_pandas()
-    # cluster_size_distribution = counts_df.to_dict(orient='records')
-    # cluster_size_distribution_json = json.dumps(cluster_size_distribution)
+
     stage2_end_time = time.time()
     stage2_time = stage2_end_time - stage2_start_time
     print(f"{cfg.pretty_name} complete. Total Time: {stage2_time:.2f}s (Agg Train: {total_train_time:.2f}s, Agg Infer: {total_inference_time:.2f}s)")
     print(f"Stage 2 Duplicates Found (if enabled): {total_cluster_duplicates}")
+    
+    metrics = {"inference_time": total_inference_time, "train_time": total_train_time, 
+               "total_time": stage2_time, "stage": cfg.name,
+               }
+    if cfg.should_dedup:
+        metrics["n_duplicates"] = total_cluster_duplicates
 
-    return final_ds, total_train_time, total_inference_time, stage2_time, total_cluster_duplicates
+    return final_ds, metrics
 
 
 
@@ -593,10 +596,7 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     print(f"Clustering output will be directed towards: {output_base_path}") # Verify path
 
     ds = ds.repartition(cfg.num_blocks) # Use num_blocks from config
-    workflow_duplicate_count = 0 # Initialize count
-    total_train_time = 0.0
-    total_inference_time = 0.0
-    total_stage2_time = 0.0
+    
 
     partition_cols = [x["cluster_col_name"] for x in cfg.stages_list]
     cluster_spec = [x["kmeans"]["n_clusters"] for x in cfg.stages_list]
@@ -612,8 +612,11 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     base_cfg.partition_cols = partition_cols
     base_cfg.args = cfg.args # Pass args down
 
+
+    workflow_duplicate_count = 0 # Initialize count
     # --- Execute Stages ---
     stage_functions = [stage1, stage2] # Define stage functions
+    metric_list = []
     for i, stage_config_data in enumerate(cfg.stages_list):
         func = stage_functions[i]
         stage_cfg = base_cfg.copy_and_resolve_references()
@@ -622,38 +625,15 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
 
         print(f"\n--- Running Stage {i+1} ({stage_cfg.name}) ---")
         print(stage_cfg)
+        ds, metrics = func(ds, stage_cfg)
+        if "n_duplicates" in metrics:
+            workflow_duplicate_count = metrics["n_duplicates"]
+        metric_list.append(metrics)
 
-        if func == stage1:
-            # Stage 1 returns: ds, train_time, inference_time, stage2_time (0)
-            ds, train_time, inference_time, stage2_time = func(ds, stage_cfg)
-            total_train_time += train_time
-            total_inference_time += inference_time
-            # Stage 1 doesn't contribute to stage2 time or duplicates
-        elif func == stage2:
-            # Stage 2 returns: ds, train_time, inference_time, stage2_time, dupe_count, distribution
-            ds, train_time, inference_time, stage2_time, workflow_duplicate_count = func(ds, stage_cfg)
-            total_train_time += train_time # Add stage 2 aggregate times
-            total_inference_time += inference_time
-            total_stage2_time += stage2_time # This is the specific stage 2 time
-        else:
-            # Handle potential fake stages or other functions if needed
-             ds, train_time, inference_time, stage2_time = func(ds, stage_cfg) # Assuming similar return for fake
-             total_train_time += train_time
-             total_inference_time += inference_time
-             total_stage2_time += stage2_time
 
 
     final_ds = ds.materialize()
 
-    # # --- Final Output Writing ---
-    # # Ensure final data is written to the experiment-specific directory
-    # try:
-    #     print(f"Attempting to write final clustered data to: {output_base_path}")
-    #     final_ds.write_parquet(output_base_path, try_create_dir=True)
-    #     print(f"Successfully wrote final data to {output_base_path}")
-    # except Exception as e:
-    #     print(f"Error writing final Parquet data to {output_base_path}: {e}")
-    #     # Decide if this is fatal or if the materialized dataset is sufficient
 
 
-    return final_ds, workflow_duplicate_count, total_train_time, total_inference_time, total_stage2_time
+    return final_ds, workflow_duplicate_count, metric_list

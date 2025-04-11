@@ -209,8 +209,16 @@ if __name__ == "__main__":
             logger.info("Running CL step...")
             cl_start_time = time.time()
             # CL step now returns: ds, dupe_count(0), train_t, infer_t, stage2_t(0), dist_json
-            clustered_ds, _, cl_train_time, cl_inference_time, cl_stage2_time = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
+            clustered_ds, _, metric_list = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
             cl_end_time = time.time()
+            
+            cl_train_time = metric_list[0]["train_time"]
+            cl_inference_time = metric_list[0]["inference_time"]
+            cl_stage2_time = metric_list[1]["total_time"]
+            
+
+            
+            
             logger.info(f"CL step completed in {cl_end_time - cl_start_time:.2f}s.")
             logger.info(f"  CL Train Time: {cl_train_time:.2f}s")
             logger.info(f"  CL Inference Time: {cl_inference_time:.2f}s")
@@ -227,10 +235,15 @@ if __name__ == "__main__":
             logger.info("Running CL -> ND step...")
             cl_nd_start_time = time.time()
             # CL step now returns: ds, dupe_count, train_t, infer_t, stage2_t, dist_json
-            clustered_ds, cl_nd_duplicates, cl_train_time, cl_inference_time, cl_stage2_time = run_cl_step_for_workflow(ray_df, cfg)
-            cl_nd_end_time = time.time()
 
-            total_duplicate_count = cl_nd_duplicates # Assign the returned count
+            clustered_ds, metric_list = run_cl_step_for_workflow(ray_df, cfg)
+            cl_nd_end_time = time.time()
+            
+            cl_train_time = metric_list[0]["train_time"]
+            cl_inference_time = metric_list[0]["inference_time"]
+            cl_stage2_time = metric_list[1]["total_time"]
+            total_duplicate_count = metric_list[1]["n_duplicates"]
+
             final_record_count = clustered_ds.count()  # Calculate final count *after* the step
             logger.info(f"CL->ND workflow completed in {cl_nd_end_time - cl_nd_start_time:.2f}s.")
             logger.info(f"  Total duplicates found across clusters: {total_duplicate_count}")
