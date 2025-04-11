@@ -282,7 +282,6 @@ if __name__ == "__main__":
             cl_inference_time_sec=cl_inference_time,
             cl_stage2_time_sec=cl_stage2_time,
             config_details_json=config_details_json,
-            cluster_size_distribution_json=cluster_size_dist_json
         )
         session.add(benchmark_run)
 

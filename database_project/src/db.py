@@ -36,11 +36,11 @@ class BenchmarkRun(Base):
     cl_inference_time_sec = Column(Float, nullable=True) # Aggregated CL inference time
     cl_stage2_time_sec = Column(Float, nullable=True) # Time for stage2 logic (if applicable)
     config_details_json = Column(Text, nullable=True) # JSON string of args + clustering config
-    cluster_size_distribution_json = Column(Text, nullable=True) # JSON string of final cluster counts
+    # cluster_size_distribution_json = Column(Text, nullable=True) # JSON string of final cluster counts
 
     # Relationships
-    resource_metrics = relationship("ResourceMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
-    accuracy_metrics = relationship("AccuracyMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
+    # resource_metrics = relationship("ResourceMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
+    # accuracy_metrics = relationship("AccuracyMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<BenchmarkRun(id={self.id}, timestamp={self.timestamp}, implementation={self.implementation})>"
@@ -51,7 +51,9 @@ class BenchmarkRun(Base):
                        # Add new parameters corresponding to new columns
                        nd_time_sec=None, nd_output_count=None, config_file_path=None,
                        cl_train_time_sec=None, cl_inference_time_sec=None, cl_stage2_time_sec=None,
-                       config_details_json=None, cluster_size_distribution_json=None):
+                       config_details_json=None, 
+                    #    cluster_size_distribution_json=None
+                       ):
         """
         Create a new BenchmarkRun entry from command line args and results, including detailed metrics.
         """
@@ -78,62 +80,62 @@ class BenchmarkRun(Base):
             cl_inference_time_sec=cl_inference_time_sec,
             cl_stage2_time_sec=cl_stage2_time_sec,
             config_details_json=config_details_json,
-            cluster_size_distribution_json=cluster_size_distribution_json
+            # cluster_size_distribution_json=cluster_size_distribution_json
         )
         session.add(run)
         # Commit is handled by the caller (run_workflows.py) after potentially adding metrics
         # session.commit()
         return run
 
-    def add_resource_metrics(self, cpu_percent_avg, cpu_percent_max, memory_usage_avg_mb,
-                           memory_usage_max_mb, network_sent_mb=0, network_recv_mb=0,
-                           disk_read_mb=0, disk_write_mb=0):
-        """
-        Add resource metrics for this benchmark run.
-        NOTE: The caller is responsible for committing the session.
-        """
-        session = object_session(self)
-        if not session:
-            raise Exception("Cannot add metrics to a detached BenchmarkRun instance.")
+    # def add_resource_metrics(self, cpu_percent_avg, cpu_percent_max, memory_usage_avg_mb,
+    #                        memory_usage_max_mb, network_sent_mb=0, network_recv_mb=0,
+    #                        disk_read_mb=0, disk_write_mb=0):
+    #     """
+    #     Add resource metrics for this benchmark run.
+    #     NOTE: The caller is responsible for committing the session.
+    #     """
+    #     session = object_session(self)
+    #     if not session:
+    #         raise Exception("Cannot add metrics to a detached BenchmarkRun instance.")
 
-        resource_metric = ResourceMetric(
-            result_id=self.id, # Set relationship via ID if not automatically handled
-            cpu_percent_avg=cpu_percent_avg,
-            cpu_percent_max=cpu_percent_max,
-            memory_usage_avg_mb=memory_usage_avg_mb,
-            memory_usage_max_mb=memory_usage_max_mb,
-            network_sent_mb=network_sent_mb,
-            network_recv_mb=network_recv_mb,
-            disk_read_mb=disk_read_mb,
-            disk_write_mb=disk_write_mb
-        )
-        self.resource_metrics.append(resource_metric)
-        # Removed session.commit()
-        return resource_metric
+    #     resource_metric = ResourceMetric(
+    #         result_id=self.id, # Set relationship via ID if not automatically handled
+    #         cpu_percent_avg=cpu_percent_avg,
+    #         cpu_percent_max=cpu_percent_max,
+    #         memory_usage_avg_mb=memory_usage_avg_mb,
+    #         memory_usage_max_mb=memory_usage_max_mb,
+    #         network_sent_mb=network_sent_mb,
+    #         network_recv_mb=network_recv_mb,
+    #         disk_read_mb=disk_read_mb,
+    #         disk_write_mb=disk_write_mb
+    #     )
+    #     self.resource_metrics.append(resource_metric)
+    #     # Removed session.commit()
+    #     return resource_metric
 
-    def add_accuracy_metrics(self, reference_implementation, true_positives, false_positives,
-                           false_negatives, precision, recall, f1_score):
-        """
-        Add accuracy metrics for this benchmark run.
-        NOTE: The caller is responsible for committing the session.
-        """
-        session = object_session(self)
-        if not session:
-            raise Exception("Cannot add metrics to a detached BenchmarkRun instance.")
+    # def add_accuracy_metrics(self, reference_implementation, true_positives, false_positives,
+    #                        false_negatives, precision, recall, f1_score):
+    #     """
+    #     Add accuracy metrics for this benchmark run.
+    #     NOTE: The caller is responsible for committing the session.
+    #     """
+    #     session = object_session(self)
+    #     if not session:
+    #         raise Exception("Cannot add metrics to a detached BenchmarkRun instance.")
 
-        accuracy_metric = AccuracyMetric(
-            result_id=self.id, # Set relationship via ID if not automatically handled
-            reference_implementation=reference_implementation,
-            true_positives=true_positives,
-            false_positives=false_positives,
-            false_negatives=false_negatives,
-            precision=precision,
-            recall=recall,
-            f1_score=f1_score
-        )
-        self.accuracy_metrics.append(accuracy_metric)
-        # Removed session.commit()
-        return accuracy_metric
+    #     accuracy_metric = AccuracyMetric(
+    #         result_id=self.id, # Set relationship via ID if not automatically handled
+    #         reference_implementation=reference_implementation,
+    #         true_positives=true_positives,
+    #         false_positives=false_positives,
+    #         false_negatives=false_negatives,
+    #         precision=precision,
+    #         recall=recall,
+    #         f1_score=f1_score
+    #     )
+    #     self.accuracy_metrics.append(accuracy_metric)
+    #     # Removed session.commit()
+    #     return accuracy_metric
 
 # class ResourceMetric(Base):
 #     __tablename__ = 'resource_metrics'
@@ -199,90 +201,90 @@ def object_session(obj):
     """Get the session for an object"""
     return sa_object_session(obj)
 
-# Example usage for monitoring resource stats while running a benchmark
-def monitor_resources(benchmark_run_id, session, interval=1.0):
-    """
-    Monitor system resources and add to database
-    Requires psutil library
+# # Example usage for monitoring resource stats while running a benchmark
+# def monitor_resources(benchmark_run_id, session, interval=1.0):
+#     """
+#     Monitor system resources and add to database
+#     Requires psutil library
 
-    Parameters:
-    -----------
-    benchmark_run_id : int
-        ID of the benchmark run
-    session : SQLAlchemy session
-        Database session
-    interval : float
-        Monitoring interval in seconds
-    """
-    try:
-        import psutil
-        import time
-        import statistics
+#     Parameters:
+#     -----------
+#     benchmark_run_id : int
+#         ID of the benchmark run
+#     session : SQLAlchemy session
+#         Database session
+#     interval : float
+#         Monitoring interval in seconds
+#     """
+#     try:
+#         import psutil
+#         import time
+#         import statistics
 
-        benchmark_run = session.query(BenchmarkRun).get(benchmark_run_id)
-        if not benchmark_run:
-            print(f"Benchmark run with ID {benchmark_run_id} not found")
-            return
+#         benchmark_run = session.query(BenchmarkRun).get(benchmark_run_id)
+#         if not benchmark_run:
+#             print(f"Benchmark run with ID {benchmark_run_id} not found")
+#             return
 
-        cpu_percent = []
-        memory_percent = []
-        start_time = time.time()
+#         cpu_percent = []
+#         memory_percent = []
+#         start_time = time.time()
 
-        # Get initial disk and network counters
-        initial_disk_io = psutil.disk_io_counters()
-        initial_net_io = psutil.net_io_counters()
+#         # Get initial disk and network counters
+#         initial_disk_io = psutil.disk_io_counters()
+#         initial_net_io = psutil.net_io_counters()
 
-        try:
-            while True:
-                cpu_percent.append(psutil.cpu_percent())
-                memory_info = psutil.virtual_memory()
-                memory_percent.append(memory_info.percent)
-                time.sleep(interval)
-        except KeyboardInterrupt:
-            # Calculate resource metrics
-            run_time = time.time() - start_time
+#         try:
+#             while True:
+#                 cpu_percent.append(psutil.cpu_percent())
+#                 memory_info = psutil.virtual_memory()
+#                 memory_percent.append(memory_info.percent)
+#                 time.sleep(interval)
+#         except KeyboardInterrupt:
+#             # Calculate resource metrics
+#             run_time = time.time() - start_time
 
-            # Calculate disk and network usage
-            final_disk_io = psutil.disk_io_counters()
-            final_net_io = psutil.net_io_counters()
+#             # Calculate disk and network usage
+#             final_disk_io = psutil.disk_io_counters()
+#             final_net_io = psutil.net_io_counters()
 
-            disk_read_mb = (final_disk_io.read_bytes - initial_disk_io.read_bytes) / (1024 * 1024)
-            disk_write_mb = (final_disk_io.write_bytes - initial_disk_io.write_bytes) / (1024 * 1024)
-            net_sent_mb = (final_net_io.bytes_sent - initial_net_io.bytes_sent) / (1024 * 1024)
-            net_recv_mb = (final_net_io.bytes_recv - initial_net_io.bytes_recv) / (1024 * 1024)
+#             disk_read_mb = (final_disk_io.read_bytes - initial_disk_io.read_bytes) / (1024 * 1024)
+#             disk_write_mb = (final_disk_io.write_bytes - initial_disk_io.write_bytes) / (1024 * 1024)
+#             net_sent_mb = (final_net_io.bytes_sent - initial_net_io.bytes_sent) / (1024 * 1024)
+#             net_recv_mb = (final_net_io.bytes_recv - initial_net_io.bytes_recv) / (1024 * 1024)
 
-            # Get system memory info to convert percent to MB
-            memory_info = psutil.virtual_memory()
-            total_memory_mb = memory_info.total / (1024 * 1024)
+#             # Get system memory info to convert percent to MB
+#             memory_info = psutil.virtual_memory()
+#             total_memory_mb = memory_info.total / (1024 * 1024)
 
-            avg_memory_percent = statistics.mean(memory_percent) if memory_percent else 0
-            max_memory_percent = max(memory_percent) if memory_percent else 0
+#             avg_memory_percent = statistics.mean(memory_percent) if memory_percent else 0
+#             max_memory_percent = max(memory_percent) if memory_percent else 0
 
-            avg_memory_mb = (avg_memory_percent / 100) * total_memory_mb
-            max_memory_mb = (max_memory_percent / 100) * total_memory_mb
+#             avg_memory_mb = (avg_memory_percent / 100) * total_memory_mb
+#             max_memory_mb = (max_memory_percent / 100) * total_memory_mb
 
-            # Add resource metrics to database
-            # Note: add_resource_metrics no longer commits internally
-            benchmark_run.add_resource_metrics(
-                cpu_percent_avg=statistics.mean(cpu_percent) if cpu_percent else 0,
-                cpu_percent_max=max(cpu_percent) if cpu_percent else 0,
-                memory_usage_avg_mb=avg_memory_mb,
-                memory_usage_max_mb=max_memory_mb,
-                network_sent_mb=net_sent_mb,
-                network_recv_mb=net_recv_mb,
-                disk_read_mb=disk_read_mb,
-                disk_write_mb=disk_write_mb
-            )
-            # Commit is now handled by the caller (e.g., after the main benchmark run is added)
-            session.commit() # Commit here after adding the metrics for this monitoring session
+#             # Add resource metrics to database
+#             # Note: add_resource_metrics no longer commits internally
+#             # benchmark_run.add_resource_metrics(
+#             #     cpu_percent_avg=statistics.mean(cpu_percent) if cpu_percent else 0,
+#             #     cpu_percent_max=max(cpu_percent) if cpu_percent else 0,
+#             #     memory_usage_avg_mb=avg_memory_mb,
+#             #     memory_usage_max_mb=max_memory_mb,
+#             #     network_sent_mb=net_sent_mb,
+#             #     network_recv_mb=net_recv_mb,
+#             #     disk_read_mb=disk_read_mb,
+#             #     disk_write_mb=disk_write_mb
+#             # )
+#             # Commit is now handled by the caller (e.g., after the main benchmark run is added)
+#             session.commit() # Commit here after adding the metrics for this monitoring session
 
-            print(f"Resource monitoring completed after {run_time:.2f} seconds. Metrics added and committed.")
+#             print(f"Resource monitoring completed after {run_time:.2f} seconds. Metrics added and committed.")
 
-    except ImportError:
-        print("psutil library required for resource monitoring. Install with: pip install psutil")
-    except Exception as e:
-        print(f"Error during resource monitoring: {e}")
-        session.rollback() # Rollback if error occurs during metric addition/commit
+#     except ImportError:
+#         print("psutil library required for resource monitoring. Install with: pip install psutil")
+#     except Exception as e:
+#         print(f"Error during resource monitoring: {e}")
+#         session.rollback() # Rollback if error occurs during metric addition/commit
 
 if __name__ == '__main__':
     # Example usage

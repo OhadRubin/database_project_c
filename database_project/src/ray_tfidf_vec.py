@@ -526,13 +526,12 @@ def stage2(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
     # counts_df = final_ds.groupby(cluster_cols).count().to_pandas()
     # cluster_size_distribution = counts_df.to_dict(orient='records')
     # cluster_size_distribution_json = json.dumps(cluster_size_distribution)
-    cluster_size_distribution_json = "[]"
     stage2_end_time = time.time()
     stage2_time = stage2_end_time - stage2_start_time
     print(f"{cfg.pretty_name} complete. Total Time: {stage2_time:.2f}s (Agg Train: {total_train_time:.2f}s, Agg Infer: {total_inference_time:.2f}s)")
     print(f"Stage 2 Duplicates Found (if enabled): {total_cluster_duplicates}")
 
-    return final_ds, total_train_time, total_inference_time, stage2_time, total_cluster_duplicates, cluster_size_distribution_json
+    return final_ds, total_train_time, total_inference_time, stage2_time, total_cluster_duplicates
 
 
 
@@ -588,7 +587,6 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
         - total_train_time: Aggregated training time across stages.
         - total_inference_time: Aggregated inference time across stages.
         - total_stage2_time: Time specifically spent in the stage2 logic.
-        - cluster_size_distribution_json: JSON string of final cluster counts.
     """
     output_base_path = cfg.args.output # Use the output path from args
     os.makedirs(output_base_path, exist_ok=True)
@@ -599,7 +597,6 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     total_train_time = 0.0
     total_inference_time = 0.0
     total_stage2_time = 0.0
-    cluster_size_distribution_json = "[]" # Default empty distribution
 
     partition_cols = [x["cluster_col_name"] for x in cfg.stages_list]
     cluster_spec = [x["kmeans"]["n_clusters"] for x in cfg.stages_list]
@@ -634,7 +631,7 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
             # Stage 1 doesn't contribute to stage2 time or duplicates
         elif func == stage2:
             # Stage 2 returns: ds, train_time, inference_time, stage2_time, dupe_count, distribution
-            ds, train_time, inference_time, stage2_time, workflow_duplicate_count, cluster_size_distribution_json = func(ds, stage_cfg)
+            ds, train_time, inference_time, stage2_time, workflow_duplicate_count = func(ds, stage_cfg)
             total_train_time += train_time # Add stage 2 aggregate times
             total_inference_time += inference_time
             total_stage2_time += stage2_time # This is the specific stage 2 time
@@ -659,4 +656,4 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     #     # Decide if this is fatal or if the materialized dataset is sufficient
 
 
-    return final_ds, workflow_duplicate_count, total_train_time, total_inference_time, total_stage2_time, cluster_size_distribution_json
+    return final_ds, workflow_duplicate_count, total_train_time, total_inference_time, total_stage2_time
