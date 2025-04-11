@@ -445,10 +445,10 @@ def stage1(ds: ray.data.Dataset, cfg: object):
 
     end_time = time.time()
     print(f"{cfg.pretty_name} complete. Time taken: {end_time - start_time:.2f} seconds")
-    return tagged_ds_A
+    return tagged_ds_A, 0
     
 from ray_minhash import dedup
-@ray.remote
+@ray.remote(num_returns=2)
 def dedup_remote(ds: ray.data.Dataset, cfg: object):
     deduplicated_dataset, duplicate_count = dedup(ds, cfg)
     return deduplicated_dataset.materialize(), duplicate_count
