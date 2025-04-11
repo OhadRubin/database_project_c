@@ -435,7 +435,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, fl
         batch_size=cfg.tfidf.inference.batch_size,
         num_cpus=cfg.tfidf.inference.num_cpus,
         concurrency=cfg.tfidf.inference.concurrency,
-        fn_constructor_kwargs={"vectorizer_ref": models_ref}, # Pass tuple
+        fn_constructor_kwargs={"vectorizer_ref": list(models_ref)}, # Pass tuple
     )
 
     tagged_ds_A = emb_tagged_ds_A.map_batches(
@@ -445,7 +445,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, fl
         resources={"TPU-v4-8-head": 1},
         num_cpus=cfg.kmeans.inference.num_cpus,
         concurrency=cfg.kmeans.inference.concurrency,
-        fn_constructor_kwargs={"kmeans_ref": models_ref, # Pass tuple
+        fn_constructor_kwargs={"kmeans_ref": list(models_ref), # Pass tuple
                                "cfg": cfg},
     ).materialize() # Materialize after inference
 
