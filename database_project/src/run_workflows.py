@@ -164,10 +164,14 @@ if __name__ == "__main__":
             # === Stage 1+2: CL+ND ===
             logger.info("Running CL step...")
             start_time = time.time()
-            clustered_ds = run_cl_step_for_workflow(ray_df, cfg)
-            
-            
-            
+            clustered_ds, cl_nd_duplicates = run_cl_step_for_workflow(ray_df, cfg)
+            total_duplicate_count = cl_nd_duplicates # Assign the returned count
+            final_record_count = clustered_ds.count()  # Calculate final count *after* the step
+            logger.info(f"CL->ND workflow completed. Total duplicates found across clusters: {total_duplicate_count}")
+            logger.info(f"CL->ND workflow final record count: {final_record_count}")
+            cl_time = time.time() - start_time
+            logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
+            workflow_total_time = cl_time # This is approximate, wall clock is better
 
         else:
             # Should not happen due to argparse choices

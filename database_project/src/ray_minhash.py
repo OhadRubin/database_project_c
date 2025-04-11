@@ -1,4 +1,3 @@
-
 # Adapted from https://github.com/modelscope/data-juicer
 import ray
 import sys
@@ -666,7 +665,7 @@ def dedup(ray_df, cfg):
     duplicate_count = original_count - unique_count
     logger.info(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
     
-    return deduplicated_dataset
+    return deduplicated_dataset, duplicate_count
 
 def run_nd_step_for_workflow(ray_df, args):
     import logging

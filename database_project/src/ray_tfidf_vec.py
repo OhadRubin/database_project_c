@@ -450,7 +450,8 @@ def stage1(ds: ray.data.Dataset, cfg: object):
 from ray_minhash import dedup
 @ray.remote
 def dedup_remote(ds: ray.data.Dataset, cfg: object):
-    return dedup(ds, cfg).materialize()
+    deduplicated_dataset, duplicate_count = dedup(ds, cfg)
+    return deduplicated_dataset.materialize(), duplicate_count
 
 @ray.remote
 def fit_predict_remote(ds: ray.data.Dataset, cfg):
@@ -464,19 +465,45 @@ def stage2(ds: ray.data.Dataset, cfg: object):
     ds_ref_list = []
     stage1_datasets = [og_ds.filter(expr=f"{stage1_cluster_col_name} == {cluster_id}") 
                        for cluster_id in range(stage1_clusters)]
-    for ds in stage1_datasets:
-        ds_ref = fit_predict_remote.remote(ds, cfg)
+    
+    processed_refs = [] # Use a list to store tuples of refs
+    for ds_cluster_data in stage1_datasets:
+        # Stage 2 clustering always happens
+        s2_clustered_ds_ref = fit_predict_remote.remote(ds_cluster_data, cfg)
+
+        # Conditional deduplication
         if cfg.should_dedup:
-            ds_ref = dedup_remote.remote(ds_ref, cfg)
-        time.sleep(20)
-        ds_ref_list.append(ds_ref)
-    ds_list = ray.get(ds_ref_list)
+            # Call dedup_remote which now returns two refs
+            final_ds_ref, dupe_count_ref = dedup_remote.remote(s2_clustered_ds_ref, cfg)
+            processed_refs.append((final_ds_ref, dupe_count_ref)) # Store both refs
+        else:
+            # If not deduping, store the clustered dataset ref and a None/0 placeholder for count ref
+            processed_refs.append((s2_clustered_ds_ref, ray.put(0))) # Use ray.put(0)
+
+        time.sleep(20) # Consider if this sleep is still necessary/optimal
+
+    # Retrieve all results (pairs of dataset refs and count refs/None)
+    results_list = ray.get([ref_pair[0] for ref_pair in processed_refs]) # Get datasets
+    count_results = ray.get([ref_pair[1] for ref_pair in processed_refs]) # Get counts (now always has a value)
+    
+    # Aggregate results
+    ds_list = results_list # List of datasets
+    total_cluster_duplicates = sum(count_results) # Sum the counts
+    
+    # Union datasets (ensure ds_list is not empty)
+    if not ds_list:
+        # Handle case with no clusters or error
+        # Depending on desired behavior, return an empty dataset or raise error
+        # Example: return ray.data.from_items([]), 0
+        raise ValueError("No datasets returned from stage 2 processing.")
+
     final_ds = ds_list[0]
-    final_ds = final_ds.union(*ds_list[1:])
+    if len(ds_list) > 1:
+        final_ds = final_ds.union(*ds_list[1:])
 
     final_ds = final_ds.sort(cfg.partition_cols[:2])
 
-    return final_ds.materialize()
+    return final_ds.materialize(), total_cluster_duplicates
 
 
 
@@ -519,9 +546,9 @@ def run_cl_step_for_workflow(ds, cfg: object):
     output_base_path = f"{cfg.base_dir}/ray_output_final_clustered" 
     os.makedirs(output_base_path, exist_ok=True)
     ds = ds.repartition(1000)
-    
+    workflow_duplicate_count = 0 # Initialize count
 
-        
+    
     partition_cols = [x["cluster_col_name"] for x in cfg.stages_list]
     cluster_spec = [x["kmeans"]["n_clusters"] for x in cfg.stages_list]
     
@@ -543,13 +570,19 @@ def run_cl_step_for_workflow(ds, cfg: object):
         stage_cfg.update(stage)
         stage_cfg.args = cfg.args
         print(stage_cfg)
-        ds = func(ds, stage_cfg)
+        # ds = func(ds, stage_cfg)
+        if func == stage2 and stage_cfg.should_dedup:
+            ds, stage_duplicates = func(ds, stage_cfg)
+            workflow_duplicate_count = stage_duplicates # Capture the total duplicates from stage2
+        else:
+            # For stage1 or stage2 without deduplication
+            ds = func(ds, stage_cfg)
     
     final_ds = ds.materialize()
     
     final_ds:ray.data.Dataset = final_ds.repartition(40)
     
-    return final_ds.materialize()
+    return final_ds.materialize(), workflow_duplicate_count
 
 
     
