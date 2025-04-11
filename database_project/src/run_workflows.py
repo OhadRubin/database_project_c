@@ -1,3 +1,4 @@
+# /database_project/src/run_workflows.py
 import os
 
 os.environ["PYSPARK_PYTHON"] = "/usr/bin/python3.10"
@@ -13,6 +14,7 @@ from logging import Logger
 from typing import Iterable
 from typing import List
 from typing import Tuple
+import json # For config serialization
 
 from scipy.integrate import quad as integrate
 import glob
@@ -20,8 +22,8 @@ import time
 import logging
 import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from ray_minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, nodes, time)
-from ray_tfidf_vec import run_cl_step_for_workflow
+from ray_minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, time)
+from ray_tfidf_vec import run_cl_step_for_workflow # Returns (ds, dupe_count, train_time, infer_time, stage2_time, dist_json)
 
 # --- Import Modified Core Logic Functions ---
 # These functions are assumed to be modified to handle in-memory Ray Datasets
@@ -69,7 +71,7 @@ def create_parser():
         "--input_file", type=str, required=True, help="Input file pattern (e.g., 'data/*.json.gz')"
     )
     parser.add_argument(
-        "--output", "-o", type=str, required=True, help="Final output directory"
+        "--output", "-o", type=str, required=True, help="Final output directory for this specific run"
     )
     parser.add_argument(
         "--limit_files", type=int, default=None, help="Limit the number of input files"
@@ -91,7 +93,7 @@ def create_parser():
     # --- Execution Environment ---
     parser.add_argument(
         "--use_ray", type=bool, default=True,
-        help="Use RayDP for Spark ND step in 'nd_cl' workflow (Recommended: True)"
+        help="Use Ray for distributed processing (Always True for these workflows)"
     ) # CL->ND workflow inherently uses Ray.
 
     # --- Benchmarking ---
@@ -107,7 +109,7 @@ def create_parser():
 if __name__ == "__main__":
     args = create_parser().parse_args()
     workflow_start_time = time.time()
-    logger.info(f"Starting workflow: {args.workflow}")
+    logger.info(f"Starting workflow: {args.workflow} with args: {args}")
 
     # --- Variables for storing results across stages/workflows ---
     final_output_path = args.output
@@ -115,63 +117,129 @@ if __name__ == "__main__":
     total_duplicate_count = 0
     num_nodes_used = 1  # Default, will be updated
     actual_workflow_time = 0
+    nd_step_time = 0.0
+    nd_output_record_count = None # Specific for ND->CL
+    cl_train_time = 0.0
+    cl_inference_time = 0.0
+    cl_stage2_time = 0.0
+    cluster_size_dist_json = "[]"
+    config_details_json = "{}"
 
     # --- Initialize Ray ---
-    # Needs careful handling if Spark also uses RayDP
     import ray
-    ray.init(address='auto', 
-             dashboard_host="0.0.0.0"
-            #  log_to_driver=False
-             )
-    num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
-    
-    cfg = read_config(args.config_file)
-    cfg.args = args
-
-    start_time = time.time()
-    input_file = glob.glob(args.input_file)[:args.limit_files]    
-    ray_df = ray.data.read_json(input_file, override_num_blocks=cfg.num_blocks)
-
-
-
     try:
-        # --- Execute Selected Workflow ---
+        ray.init(address='auto',
+                 dashboard_host="0.0.0.0",
+                 # log_to_driver=False # Keep logs separate per node if needed
+                 ignore_reinit_error=True # Allow re-initialization if already connected
+                 )
+        num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
+        logger.info(f"Ray initialized. Found {num_nodes_used} live nodes.")
+    except Exception as e:
+        logger.error(f"Failed to initialize Ray: {e}", exc_info=True)
+        sys.exit(1)
+
+    # --- Load Configs ---
+    try:
+        cfg = read_config(args.config_file)
+        cfg.args = args # Make args accessible within config if needed by downstream funcs
+
+        # Prepare full config details for logging
+        config_details = {
+            "args": vars(args),
+            "clustering_config": cfg.to_dict() # Convert ConfigDict to dict for JSON
+        }
+        config_details_json = json.dumps(config_details, indent=2, default=str) # Use default=str for non-serializable types
+
+    except FileNotFoundError:
+        logger.error(f"Clustering config file not found: {args.config_file}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error loading or processing config file {args.config_file}: {e}", exc_info=True)
+        sys.exit(1)
+
+
+    # --- Load Data ---
+    try:
+        data_load_start = time.time()
+        input_files = glob.glob(args.input_file)
+        if not input_files:
+            logger.error(f"No files found matching input pattern: {args.input_file}")
+            sys.exit(1)
+
+        if args.limit_files is not None and args.limit_files > 0:
+            input_files = input_files[:args.limit_files]
+            logger.info(f"Limited input to {len(input_files)} files.")
+        elif args.limit_files is not None and args.limit_files <= 0:
+             logger.warning(f"limit_files is {args.limit_files}, processing all found files.")
+
+        total_size_gb = get_total_size_gb(input_files)
+        logger.info(f"Reading {len(input_files)} files (Total size: {total_size_gb:.2f} GB)...")
+
+        ray_df = ray.data.read_json(input_files, override_num_blocks=cfg.num_blocks)
+        # It's good practice to materialize early if memory allows, or before complex ops
+        # ray_df = ray_df.materialize()
+        logger.info(f"Data loaded into Ray Dataset in {time.time() - data_load_start:.2f} seconds.")
+
+    except Exception as e:
+        logger.error(f"Error loading data from {args.input_file}: {e}", exc_info=True)
+        sys.exit(1)
+
+
+    # --- Execute Workflow ---
+    try:
         if args.workflow == "nd_cl":
             logger.info("Executing ND -> CL workflow...")
             # === Stage 1: ND ===
             logger.info("Running ND step...")
-            
-            
-            intermediate_ray_ds, nd_duplicates, nd_time = run_nd_step_for_workflow(ray_df, args)
-            final_record_count = intermediate_ray_ds.count()
-            total_duplicate_count = nd_duplicates 
-            intermediate_ray_ds = intermediate_ray_ds.repartition(1000).materialize()
+            nd_start_time = time.time()
+            intermediate_ray_ds, nd_duplicates, nd_step_time = run_nd_step_for_workflow(ray_df, args)
+            nd_end_time = time.time()
+            nd_step_time = nd_end_time - nd_start_time # More accurate timing
+            logger.info(f"ND step completed in {nd_step_time:.2f}s. Found {nd_duplicates} duplicates.")
 
+            nd_output_record_count = intermediate_ray_ds.count() # Capture count after ND
+            total_duplicate_count = nd_duplicates
+            logger.info(f"Record count after ND: {nd_output_record_count}")
 
-            cfg.base_stage.should_dedup = False
+            # Prepare for CL step
+            intermediate_ray_ds = intermediate_ray_ds.repartition(cfg.num_blocks).materialize()
+            cfg.base_stage.should_dedup = False # Ensure CL step doesn't dedup again
+
             # === Stage 2: CL ===
             logger.info("Running CL step...")
-            start_time = time.time()
-            clustered_ds = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
-            cl_time = time.time() - start_time
-            logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
-            workflow_total_time = nd_time + cl_time # This is approximate, wall clock is better
+            cl_start_time = time.time()
+            # CL step now returns: ds, dupe_count(0), train_t, infer_t, stage2_t(0), dist_json
+            clustered_ds, _, cl_train_time, cl_inference_time, cl_stage2_time, cluster_size_dist_json = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
+            cl_end_time = time.time()
+            logger.info(f"CL step completed in {cl_end_time - cl_start_time:.2f}s.")
+            logger.info(f"  CL Train Time: {cl_train_time:.2f}s")
+            logger.info(f"  CL Inference Time: {cl_inference_time:.2f}s")
+            # final_record_count is the count after ND in this workflow
+            final_record_count = nd_output_record_count
+
 
         elif args.workflow == "cl_nd":
+            logger.info("Executing CL -> ND workflow...")
             # Set the deduplication flag for this workflow
             cfg.base_stage.should_dedup = True
-            
+
             # === Stage 1+2: CL+ND ===
-            logger.info("Running CL step...")
-            start_time = time.time()
-            clustered_ds, cl_nd_duplicates = run_cl_step_for_workflow(ray_df, cfg)
+            logger.info("Running CL -> ND step...")
+            cl_nd_start_time = time.time()
+            # CL step now returns: ds, dupe_count, train_t, infer_t, stage2_t, dist_json
+            clustered_ds, cl_nd_duplicates, cl_train_time, cl_inference_time, cl_stage2_time, cluster_size_dist_json = run_cl_step_for_workflow(ray_df, cfg)
+            cl_nd_end_time = time.time()
+
             total_duplicate_count = cl_nd_duplicates # Assign the returned count
             final_record_count = clustered_ds.count()  # Calculate final count *after* the step
-            logger.info(f"CL->ND workflow completed. Total duplicates found across clusters: {total_duplicate_count}")
-            logger.info(f"CL->ND workflow final record count: {final_record_count}")
-            cl_time = time.time() - start_time
-            logger.info(f"CL step completed in {cl_time:.2f}s. Final output: {final_output_path}")
-            workflow_total_time = cl_time # This is approximate, wall clock is better
+            logger.info(f"CL->ND workflow completed in {cl_nd_end_time - cl_nd_start_time:.2f}s.")
+            logger.info(f"  Total duplicates found across clusters: {total_duplicate_count}")
+            logger.info(f"  Final record count: {final_record_count}")
+            logger.info(f"  CL Train Time (Agg): {cl_train_time:.2f}s")
+            logger.info(f"  CL Inference Time (Agg): {cl_inference_time:.2f}s")
+            logger.info(f"  CL Stage2 Time: {cl_stage2_time:.2f}s")
+
 
         else:
             # Should not happen due to argparse choices
@@ -183,27 +251,49 @@ if __name__ == "__main__":
 
 
         benchmark_notes = args.notes if args.notes else f"Workflow: {args.workflow}"
-        if args.workflow == 'cl_nd':
-             benchmark_notes += f" (CL Cfg: {os.path.basename(args.config_file)})"
+        benchmark_notes += f" | CL Cfg: {os.path.basename(args.config_file)}" # Always add config file
 
         from db import init_db, get_session, BenchmarkRun
-        
+
         engine = init_db()
         session = get_session(engine)
-        
-        benchmark_run = BenchmarkRun.create_from_args(
-            session=session,
-            args=args,
+
+        # Create the main benchmark entry
+        benchmark_run = BenchmarkRun(
+            input_file=args.input_file, # Log the pattern
+            output_dir=args.output,
+            notes=benchmark_notes,
             duplicate_count=total_duplicate_count, # Meaning depends on workflow
             record_count=final_record_count,       # Final count after all steps
-            execution_time=actual_workflow_time,   # Total wall clock time
             implementation=args.workflow,          # Use workflow name as implementation
             num_nodes=num_nodes_used,              # Max nodes used during the workflow
-            notes=benchmark_notes,
+            threshold=args.threshold,
+            ngram_size=args.ngram_size,
+            min_ngram_size=args.min_ngram_size,
+            num_perm=args.num_perm,
+            execution_time=actual_workflow_time,   # Total wall clock time
             limit_files=args.limit_files,          # Log the limit used
-            total_size_gb=0            # Log calculated size
+            total_size_gb=total_size_gb,           # Log calculated size
+            # New fields
+            nd_time_sec=nd_step_time,
+            nd_output_count=nd_output_record_count, # Will be None for CL->ND
+            config_file_path=args.config_file,
+            cl_train_time_sec=cl_train_time,
+            cl_inference_time_sec=cl_inference_time,
+            cl_stage2_time_sec=cl_stage2_time,
+            config_details_json=config_details_json,
+            cluster_size_distribution_json=cluster_size_dist_json
         )
+        session.add(benchmark_run)
+
+        # Add resource/accuracy metrics here if they were collected
+        # e.g., benchmark_run.add_resource_metrics(...)
+        # e.g., benchmark_run.add_accuracy_metrics(...)
+
+        # Commit everything related to this run
+        session.commit()
         logger.info(f"Benchmark data saved with ID: {benchmark_run.id}")
+        session.close()
 
     except Exception as e:
         logger.error(f"Workflow '{args.workflow}' failed: {e}", exc_info=True)
@@ -211,6 +301,10 @@ if __name__ == "__main__":
         sys.exit(1)
 
     finally:
+        # Optional: Shutdown Ray explicitly if needed, otherwise it might persist
+        # if ray.is_initialized():
+        #     logger.info("Shutting down Ray...")
+        #     ray.shutdown()
         pass
 
     logger.info(f"Workflow {args.workflow} completed successfully.")
