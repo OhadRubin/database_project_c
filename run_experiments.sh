@@ -88,19 +88,6 @@ else
     git pull
 fi
 
-# Dependency Installation Reminder (Best practice: use requirements.txt)
-echo "Checking main dependencies..."
-# Example check for Ray:
-if ! $PYTHON_EXEC -m pip show ray | grep -q "Version: 2.43.0"; then
-   echo "WARNING: Ray version 2.43.0 not found or detected incorrectly."
-   echo "Please ensure all dependencies are installed on ALL nodes:"
-   echo "  cd $PROJECT_DIR"
-   echo "  $PYTHON_EXEC -m pip install -r requirements.txt  # <-- CREATE this file!"
-   # Example pip command if no requirements file (run on all nodes):
-   # $PYTHON_EXEC -m pip install ray==2.43.0 numpy~=1.0 sqlalchemy psycopg2-binary pandas scikit-learn jax jaxlib flax torch tqdm ml_collections PyYAML httpx pyarrow psutil python-dotenv
-   # exit 1 # Optional: exit if dependencies might be missing
-fi
-echo "Dependencies assumed present. Ensure requirements.txt is installed on all nodes."
 
 
 # Set Database Connection String
