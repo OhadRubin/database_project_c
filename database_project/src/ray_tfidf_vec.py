@@ -377,8 +377,7 @@ def fit_models_remote(cfg, ds):
 
 class TFIDFInferenceModel:
     def __init__(self, vectorizer_ref: ray.ObjectRef):
-        vectorizer, _, _ = ray.get(vectorizer_ref) # Get only the vectorizer
-        self.vectorizer = vectorizer
+        self.vectorizer = ray.get(vectorizer_ref)
 
     def __call__(self, batch: pd.DataFrame):
         texts = batch["text"].tolist()
@@ -393,8 +392,7 @@ class KMeansInferenceModel:
         kmeans_ref: ray.ObjectRef,
         cfg: str
         ):
-        _, kmeans, _ = ray.get(kmeans_ref) # Get only the kmeans model
-        self.kmeans = kmeans
+        self.kmeans = ray.get(kmeans_ref)
         self.tagging_func = compile_nearest_cluster(self.kmeans, kmeans_batch_size=cfg.kmeans.inference.batch_size)
         self.cluster_col_name = cfg.cluster_col_name
 
@@ -427,7 +425,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, fl
     inference_start_time = time.time()
 
     # Combine models ref for inference actors
-    models_ref = (vectorizer_ref, kmeans_ref, train_time_ref) # Pass tuple
+    # models_ref = (vectorizer_ref, kmeans_ref, train_time_ref) # Pass tuple
 
     emb_tagged_ds_A = ds.map_batches(
         TFIDFInferenceModel,
@@ -435,7 +433,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, fl
         batch_size=cfg.tfidf.inference.batch_size,
         num_cpus=cfg.tfidf.inference.num_cpus,
         concurrency=cfg.tfidf.inference.concurrency,
-        fn_constructor_kwargs={"vectorizer_ref": list(models_ref)}, # Pass tuple
+        fn_constructor_kwargs={"vectorizer_ref": vectorizer_ref}, # Pass tuple
     )
 
     tagged_ds_A = emb_tagged_ds_A.map_batches(
@@ -445,7 +443,7 @@ def fit_predict(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, fl
         resources={"TPU-v4-8-head": 1},
         num_cpus=cfg.kmeans.inference.num_cpus,
         concurrency=cfg.kmeans.inference.concurrency,
-        fn_constructor_kwargs={"kmeans_ref": list(models_ref), # Pass tuple
+        fn_constructor_kwargs={"kmeans_ref": kmeans_ref, # Pass tuple
                                "cfg": cfg},
     ).materialize() # Materialize after inference
 

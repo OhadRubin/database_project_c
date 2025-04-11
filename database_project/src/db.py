@@ -135,44 +135,44 @@ class BenchmarkRun(Base):
         # Removed session.commit()
         return accuracy_metric
 
-class ResourceMetric(Base):
-    __tablename__ = 'resource_metrics'
+# class ResourceMetric(Base):
+#     __tablename__ = 'resource_metrics'
 
-    id = Column(Integer, primary_key=True)
-    result_id = Column(Integer, ForeignKey('benchmark_runs.id'))
-    cpu_percent_avg = Column(Float)
-    cpu_percent_max = Column(Float)
-    memory_usage_avg_mb = Column(Float)
-    memory_usage_max_mb = Column(Float)
-    network_sent_mb = Column(Float)
-    network_recv_mb = Column(Float)
-    disk_read_mb = Column(Float)
-    disk_write_mb = Column(Float)  # Corrected from 'resulte_mb'
+#     id = Column(Integer, primary_key=True)
+#     result_id = Column(Integer, ForeignKey('benchmark_runs.id'))
+#     cpu_percent_avg = Column(Float)
+#     cpu_percent_max = Column(Float)
+#     memory_usage_avg_mb = Column(Float)
+#     memory_usage_max_mb = Column(Float)
+#     network_sent_mb = Column(Float)
+#     network_recv_mb = Column(Float)
+#     disk_read_mb = Column(Float)
+#     disk_write_mb = Column(Float)  # Corrected from 'resulte_mb'
 
-    # Relationship
-    benchmark_run = relationship("BenchmarkRun", back_populates="resource_metrics")
+#     # Relationship
+#     benchmark_run = relationship("BenchmarkRun", back_populates="resource_metrics")
 
-    def __repr__(self):
-        return f"<ResourceMetric(id={self.id}, result_id={self.result_id})>"
+#     def __repr__(self):
+#         return f"<ResourceMetric(id={self.id}, result_id={self.result_id})>"
 
-class AccuracyMetric(Base):
-    __tablename__ = 'accuracy_metrics'
+# class AccuracyMetric(Base):
+#     __tablename__ = 'accuracy_metrics'
 
-    id = Column(Integer, primary_key=True)
-    result_id = Column(Integer, ForeignKey('benchmark_runs.id'))
-    reference_implementation = Column(String(100))
-    true_positives = Column(Integer)
-    false_positives = Column(Integer)
-    false_negatives = Column(Integer)
-    precision = Column(Float)
-    recall = Column(Float)
-    f1_score = Column(Float)
+#     id = Column(Integer, primary_key=True)
+#     result_id = Column(Integer, ForeignKey('benchmark_runs.id'))
+#     reference_implementation = Column(String(100))
+#     true_positives = Column(Integer)
+#     false_positives = Column(Integer)
+#     false_negatives = Column(Integer)
+#     precision = Column(Float)
+#     recall = Column(Float)
+#     f1_score = Column(Float)
 
-    # Relationship
-    benchmark_run = relationship("BenchmarkRun", back_populates="accuracy_metrics")
+#     # Relationship
+#     benchmark_run = relationship("BenchmarkRun", back_populates="accuracy_metrics")
 
-    def __repr__(self):
-        return f"<AccuracyMetric(id={self.id}, result_id={self.result_id}, f1_score={self.f1_score})>"
+#     def __repr__(self):
+#         return f"<AccuracyMetric(id={self.id}, result_id={self.result_id}, f1_score={self.f1_score})>"
 
 
 def init_db(db_path=None):
