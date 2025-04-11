@@ -474,29 +474,64 @@ def fit_predict_remote(ds: ray.data.Dataset, cfg):
     tagged_ds, train_time, inference_time = fit_predict(ds.materialize(), cfg)
     return tagged_ds.materialize(), train_time, inference_time
 
-def stage_2(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
-
-def stage_3(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
-
-def stage_4(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
-
 def stage_n(ds: ray.data.Dataset, cfg: object):
     """Runs clustering and optional deduplication, returns dataset, timings, dupe count, and distribution."""
     stage_start_time = time.time()
-    prev_stage_clusters = cfg.cluster_spec[0]
-    prev_stage_cluster_col_name = cfg.partition_cols[0]
-
-    og_ds = ds
-    prev_stage_datasets = [og_ds.filter(expr=f"{prev_stage_cluster_col_name} == {cluster_id}")
-                       for cluster_id in range(prev_stage_clusters)]
-
+    
+    # Determine current stage index (1-indexed in name, 0-indexed in arrays)
+    current_stage_name = cfg.name
+    current_stage_num = int(current_stage_name.split("_")[1])  # Extract number from "stage_N"
+    current_stage_index = current_stage_num - 1  # Convert to 0-indexed 
+    
+    # Get all previous stage cluster information
+    prev_stages_count = current_stage_index  # Number of previous stages
+    
+    print(f"Stage {current_stage_name}: Creating partitions based on {prev_stages_count} previous stages")
+    
+    # For stage 2, we just need stage 1 clusters
+    # For stage 3, we need stage 1 and 2 clusters
+    # For stage 4, we need stage 1, 2, and 3 clusters
+    
+    # Get all possible partition combinations from previous stages
+    def get_partition_combinations(stages_processed=0, current_filters=None):
+        """Recursively build all combinations of cluster filters"""
+        if current_filters is None:
+            current_filters = {}
+            
+        if stages_processed == prev_stages_count:
+            # Convert filter dict to expression string
+            filter_parts = [f"{col} == {val}" for col, val in current_filters.items()]
+            filter_expr = " and ".join(filter_parts)
+            return [filter_expr]
+            
+        stage_idx = stages_processed
+        cluster_col = cfg.partition_cols[stage_idx]
+        n_clusters = cfg.cluster_spec[stage_idx]
+        
+        result = []
+        for cluster_id in range(n_clusters):
+            new_filters = current_filters.copy()
+            new_filters[cluster_col] = cluster_id
+            result.extend(get_partition_combinations(stages_processed + 1, new_filters))
+            
+        return result
+        
+    # Generate all partition filter expressions
+    partition_filters = get_partition_combinations()
+    print(f"Generated {len(partition_filters)} partition filters")
+    
+    # Create a dataset for each partition filter
+    partitioned_datasets = []
+    for filter_expr in partition_filters:
+        filtered_ds = ds.filter(expr=filter_expr)
+        # Only keep partitions that have data
+        if filtered_ds.count() > 0:
+            partitioned_datasets.append(filtered_ds)
+    
     processed_refs = []
-    for ds_cluster_data in prev_stage_datasets:
-        # Stage 2 clustering always happens
-        clustered_ds_ref, train_time_ref, infer_time_ref = fit_predict_remote.remote(ds_cluster_data, cfg)
+    for ds_partition in partitioned_datasets:
+        # Process each partition
+        clustered_ds_ref, train_time_ref, infer_time_ref = fit_predict_remote.remote(ds_partition, cfg)
 
         # Conditional deduplication
         if cfg.should_dedup:
@@ -518,8 +553,8 @@ def stage_n(ds: ray.data.Dataset, cfg: object):
     # Aggregate results
     ds_list = dataset_results # List of datasets
     total_cluster_duplicates = sum(count_results) # Sum the counts
-    total_train_time = np.mean(train_time_results)
-    total_inference_time = np.mean(infer_time_results)
+    total_train_time = np.mean(train_time_results) if train_time_results else 0
+    total_inference_time = np.mean(infer_time_results) if infer_time_results else 0
 
     # Union datasets (ensure ds_list is not empty)
     if not ds_list:
@@ -529,8 +564,9 @@ def stage_n(ds: ray.data.Dataset, cfg: object):
     if len(ds_list) > 1:
         final_ds = final_ds.union(*ds_list[1:])
 
-    final_ds = final_ds.sort(cfg.partition_cols[:2]).materialize() # Materialize after union and sort
-
+    # Sort by all partition columns up to the current stage
+    current_partition_cols = cfg.partition_cols[:current_stage_index+1]
+    final_ds = final_ds.sort(current_partition_cols).materialize() # Materialize after union and sort
 
     stage_end_time = time.time()
     stage_time = stage_end_time - stage_start_time
@@ -549,6 +585,11 @@ def stage_n(ds: ray.data.Dataset, cfg: object):
 def stage_2(ds: ray.data.Dataset, cfg: object):
     return stage_n(ds, cfg)
 
+def stage_3(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
+
+def stage_4(ds: ray.data.Dataset, cfg: object):
+    return stage_n(ds, cfg)
 
 
 import glob
