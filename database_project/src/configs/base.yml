@@ -3,7 +3,7 @@ ray_max_docs_limit: null
 base_dir: /mnt/gcs_bucket/ray_clustering_output
 num_blocks: 1000
 base_stage:
-  max_docs: 5000
+  max_docs: 50000
   tfidf: 
       train:
         n_components: 128
