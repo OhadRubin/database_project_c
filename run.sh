@@ -108,8 +108,6 @@ else
 fi
 
 
-
-
 # Wait until we have 10 nodes in the Ray cluster
 echo "Waiting for $N_NODES nodes to join the Ray cluster..."
 while true; do
@@ -145,19 +143,163 @@ WORKFLOW="cl_nd"
 SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
 
 
+
+
+
+echo "Starting Combined Setup and Experiments Script..."
+START_TIME=$(date +%s)
+SCRIPT_START_TIME=$START_TIME # For total script time
+
+# --- Configuration ---
+PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
+PYTHON_EXEC="python3.10"
+SRC_DIR="$PROJECT_DIR/database_project/src"
+RUN_SCRIPT="$SRC_DIR/run_workflows.py"
+DOWNLOAD_SCRIPT="$SRC_DIR/download_c4.py"
+DB_SCRIPT="$SRC_DIR/db.py"
+RAY_EXEC="$HOME/.local/bin/ray" # Adjust if ray is installed elsewhere
+
+# Data/Output Config
+BASE_INPUT_FILES_DIR="/dev/shm/c4_files"
+BASE_INPUT_FILES_PATTERN="$BASE_INPUT_FILES_DIR/c4-train.*.json.gz"
+NUM_EXPECTED_DATA_FILES=40
+
+# >>> Choose Output Location <<<
+USE_GCS_OUTPUT=true # Set to false to use /dev/shm instead of GCS
+GCS_BUCKET_NAME="meliad2_us2_backup" # Your GCS bucket name
+GCS_MOUNT_POINT="/mnt/gcs_bucket"
+GCS_CACHE_DIR="/dev/shm/gcs_cache"
+
+
+if [ "$USE_GCS_OUTPUT" = true ]; then
+  BASE_OUTPUT_DIR="$GCS_MOUNT_POINT/ray_experiment_outputs_$(date +%Y%m%d_%H%M%S)" # Unique dir per run on GCS
+  FINAL_CLUSTER_OUTPUT_BASE="$GCS_MOUNT_POINT/ray_clustering_output" # For base.yml consistency check
+else
+  BASE_OUTPUT_DIR="/dev/shm/ray_experiment_outputs_$(date +%Y%m%d_%H%M%S)" # Unique dir per run on /dev/shm
+  FINAL_CLUSTER_OUTPUT_BASE="/dev/shm/ray_clustering_output" # For base.yml consistency check
+fi
+echo "Using Base Output Directory: $BASE_OUTPUT_DIR"
+
+# Experiment Defaults
+BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
+DEFAULT_LIMIT_FILES=40 # Default data size for parameter sensitivity tests
+DEFAULT_THRESHOLD=0.7  # Default threshold for data/perm scaling tests
+DEFAULT_NUM_PERM=256   # Default num_perm for data/threshold scaling tests
+
+# Ray Cluster Config
+GCP_ZONE="us-central2-b" # Zone where TPUs are located
+HEAD_NODE_GCP_NAME="v4-8-node-2" # Specific name of the intended head node in GCP
+TPU_RESOURCE_NAME="TPU-v4-8-head" # Ray resource name matching base.yml
+# --- Helper Function to Run a Single Experiment Config ---
+run_experiment() {
+    local workflow="$1"
+    local limit_files="$2"
+    local threshold="$3"
+    local num_perm="$4"
+    local config_file="$5"
+    local experiment_tag="$6" # e.g., "datasize", "threshold", "numperm"
+
+    # Create a unique output directory name based on parameters
+    local output_subdir="${workflow}_${experiment_tag}_files${limit_files}_thresh${threshold}_perm${num_perm}"
+    local output_path="$BASE_OUTPUT_DIR/$output_subdir"
+
+    # Create descriptive notes for the database
+    local notes="Experiment: ${experiment_tag} | Workflow: ${workflow} | LimitFiles: ${limit_files} | Threshold: ${threshold} | NumPerm: ${num_perm} | Config: $(basename ${config_file})"
+
+    # Construct the command
+    local cmd="$PYTHON_EXEC $RUN_SCRIPT \
+    --workflow $workflow \
+    --input_file \"$BASE_INPUT_FILES_PATTERN\" \
+    --output $output_path \
+    --config_file $config_file \
+    --limit_files $limit_files \
+    --threshold $threshold \
+    --num_perm $num_perm \
+    --notes \"$notes\" \
+    --use_ray True" # Assuming Ray is always used
+
+    echo "----------------------------------------------------------------------"
+    echo "Running: $notes"
+    echo "Command:"
+    echo "$cmd"
+    echo "Output Dir: $output_path"
+    echo "----------------------------------------------------------------------"
+
+    # Create output dir and run the command
+    mkdir -p "$output_path"
+    # Use eval to handle the quotes in input_file properly
+    eval "$cmd"
+
+    # *** IMPORTANT NOTE ***
+    # Verify that run_cl_step_for_workflow in ray_tfidf_vec.py uses the --output path passed here
+    # (via args.output) for its *final* data writing, instead of only using base_dir from base.yml.
+    # If it only uses base.yml, outputs from different experiments might overwrite each other
+    # in $FINAL_CLUSTER_OUTPUT_BASE. You may need to modify ray_tfidf_vec.py.
+    # Check if $FINAL_CLUSTER_OUTPUT_BASE exists, as it might be written to by run_cl_step_for_workflow
+    if [ -d "$FINAL_CLUSTER_OUTPUT_BASE" ]; then
+        echo "WARNING: Directory '$FINAL_CLUSTER_OUTPUT_BASE' exists. Check if ray_tfidf_vec.py is writing output there instead of '$output_path'."
+    fi
+    # ********************
+
+    echo "Finished: $notes"
+    echo "----------------------------------------------------------------------"
+    sleep 10 # Small delay between runs
+}
+
 # SCRIPT="$SCRIPT --implementation tfidf_minhash"
 # SCRIPT="$SCRIPT  --num_perm 1024 --threshold 0.9"
 
 # Run only on head node
 if $IS_HEAD; then
-    # for NUM_FILES in 1 5 10 20 30 40; do
-    for NUM_FILES in 1; do
-        COMMAND="$SCRIPT --limit_files $NUM_FILES"
-        rm -rf /dev/shm/c4_outputs 
-        mkdir -p /dev/shm/c4_outputs
-        echo "$COMMAND"
-        eval "$COMMAND"
+# --- Experiment 1.1: Data Size Scaling ---
+    echo ""
+    echo "##################################################"
+    echo "# Running Experiment 1.1: Data Size Scaling      #"
+    echo "##################################################"
+    echo ""
+
+    FILE_SIZES=(10 20 40) # Reduced max size for feasibility, adjust as needed (80?)
+
+    for size in "${FILE_SIZES[@]}"; do
+      run_experiment "nd_cl" "$size" "$DEFAULT_THRESHOLD" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "datasize"
+      run_experiment "cl_nd" "$size" "$DEFAULT_THRESHOLD" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "datasize"
     done
+
+    # --- Experiment 2.1: Varying Similarity Threshold ---
+    echo ""
+    echo "##################################################"
+    echo "# Running Experiment 2.1: Threshold Sensitivity  #"
+    echo "##################################################"
+    echo ""
+
+    THRESHOLDS=(0.6 0.7 0.8 0.9)
+
+    for thr in "${THRESHOLDS[@]}"; do
+      run_experiment "nd_cl" "$DEFAULT_LIMIT_FILES" "$thr" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "threshold"
+      run_experiment "cl_nd" "$DEFAULT_LIMIT_FILES" "$thr" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "threshold"
+    done
+
+    # --- Experiment 2.2: Varying Number of Permutations ---
+    echo ""
+    echo "##################################################"
+    echo "# Running Experiment 2.2: NumPerm Sensitivity    #"
+    echo "##################################################"
+    echo ""
+
+    NUM_PERMS=(128 256 512)
+
+    for perm in "${NUM_PERMS[@]}"; do
+      run_experiment "nd_cl" "$DEFAULT_LIMIT_FILES" "$DEFAULT_THRESHOLD" "$perm" "$BASE_CONFIG_FILE" "numperm"
+      run_experiment "cl_nd" "$DEFAULT_LIMIT_FILES" "$DEFAULT_THRESHOLD" "$perm" "$BASE_CONFIG_FILE" "numperm"
+    done
+    # # for NUM_FILES in 1 5 10 20 30 40; do
+    # for NUM_FILES in 1; do
+    #     COMMAND="$SCRIPT --limit_files $NUM_FILES"
+    #     rm -rf /dev/shm/c4_outputs 
+    #     mkdir -p /dev/shm/c4_outputs
+    #     echo "$COMMAND"
+    #     eval "$COMMAND"
+    # done
 else
     echo "Skipping deduplication script on worker node"
 fi
