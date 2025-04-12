@@ -520,15 +520,10 @@ def stage_n(ds: ray.data.Dataset, cfg: object, current_stage_index: int):
     print(f"Generated {len(partition_filters)} partition filters")
     
     # Create a dataset for each partition filter
-    partitioned_datasets = []
-    for filter_expr in partition_filters:
-        filtered_ds = ds.filter(expr=filter_expr)
-        # Only keep partitions that have data
-        if filtered_ds.count() > 0:
-            partitioned_datasets.append(filtered_ds)
     
     processed_refs = []
-    for ds_partition in partitioned_datasets:
+    for filter_expr in partition_filters:
+        ds_partition = ds.filter(expr=filter_expr)
         # Process each partition
         clustered_ds_ref, train_time_ref, infer_time_ref = fit_predict_remote.remote(ds_partition, cfg)
 
@@ -701,8 +696,6 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
         print(f"\n--- Running Stage {i+1} ({stage_cfg.name}) ---")
         print(stage_cfg)
         ds, metrics = func(ds, stage_cfg)
-        if "n_duplicates" in metrics:
-            workflow_duplicate_count = metrics["n_duplicates"]
         metric_list.append(metrics)
 
 
@@ -711,4 +704,4 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
 
 
 
-    return final_ds, workflow_duplicate_count, metric_list
+    return final_ds, metric_list
