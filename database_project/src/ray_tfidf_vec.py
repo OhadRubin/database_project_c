@@ -474,14 +474,13 @@ def fit_predict_remote(ds: ray.data.Dataset, cfg):
     tagged_ds, train_time, inference_time = fit_predict(ds.materialize(), cfg)
     return tagged_ds.materialize(), train_time, inference_time
 
-def stage_n(ds: ray.data.Dataset, cfg: object):
+def stage_n(ds: ray.data.Dataset, cfg: object, current_stage_index: int):
     """Runs clustering and optional deduplication, returns dataset, timings, dupe count, and distribution."""
     stage_start_time = time.time()
     
     # Determine current stage index (1-indexed in name, 0-indexed in arrays)
     current_stage_name = cfg.name
-    current_stage_num = int(current_stage_name.split("_")[1])  # Extract number from "stage_N"
-    current_stage_index = current_stage_num - 1  # Convert to 0-indexed 
+    current_stage_index = current_stage_index - 1  # Convert to 0-indexed 
     
     # Get all previous stage cluster information
     prev_stages_count = current_stage_index  # Number of previous stages
@@ -583,13 +582,13 @@ def stage_n(ds: ray.data.Dataset, cfg: object):
 
 
 def stage_2(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
+    return stage_n(ds, cfg, 2)
 
 def stage_3(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
+    return stage_n(ds, cfg, 3)
 
 def stage_4(ds: ray.data.Dataset, cfg: object):
-    return stage_n(ds, cfg)
+    return stage_n(ds, cfg, 4)
 
 
 import glob
@@ -605,11 +604,22 @@ def read_config(path):
         cfg = config_dict.ConfigDict(config_data)
     return cfg
 
-
 def fake_stage1(ds, cfg):
+    """
+    Creates a fake stage1 that assigns random cluster IDs without actual computation.
+    This is useful for testing or when real clustering is not needed.
+    """
     import numpy as np
+    import time
+    
+    stage_start_time = time.time()
+    total_train_time = 0.0
+    total_inference_time = 0.0
+    total_cluster_duplicates = 0
+    
     n_clusters = cfg.kmeans.n_clusters
-
+    print(f"Running fake {cfg.pretty_name} with {n_clusters} clusters")
+    
     # Create a copy of the dataset with random cluster assignments
     def assign_random_cluster(batch):
         batch_size = len(batch)
@@ -622,13 +632,19 @@ def fake_stage1(ds, cfg):
         batch_format="pandas",
         batch_size=2048
     ).materialize()
+    
+    stage_end_time = time.time()
+    stage_time = stage_end_time - stage_start_time
+    print(f"{cfg.pretty_name} complete. Total Time: {stage_time:.2f}s (Agg Train: {total_train_time:.2f}s, Agg Infer: {total_inference_time:.2f}s)")
+    print(f"{cfg.pretty_name} Duplicates Found (if enabled): {total_cluster_duplicates}")
+    
+    metrics = {"inference_time": total_inference_time, "train_time": total_train_time, 
+               "total_time": stage_time, "stage": cfg.name,
+               }
+    if cfg.should_dedup:
+        metrics["n_duplicates"] = total_cluster_duplicates
 
-    # Fake timings for compatibility
-    fake_train_time = 1.0
-    fake_inference_time = 1.0
-    fake_stage2_time = 0.0
-
-    return ds, fake_train_time, fake_inference_time, fake_stage2_time
+    return ds, metrics
 
 
 
@@ -668,7 +684,13 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
 
     workflow_duplicate_count = 0 # Initialize count
     # --- Execute Stages ---
-    stage_functions = [stage1, stage_2, stage_3, stage_4] # Define stage functions for all 4 stages
+    
+    
+    cfg.stages_list[0].mock = True
+    
+    stage_functions = [
+                    fake_stage1 if cfg.stages_list[0].mock  else stage1,
+                       stage_2, stage_3, stage_4] # Define stage functions for all 4 stages
     metric_list = []
     for i, stage_config_data in enumerate(cfg.stages_list):
         func = stage_functions[i]
