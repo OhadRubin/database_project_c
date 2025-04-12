@@ -246,9 +246,8 @@ run_experiment() {
     sleep 10 # Small delay between runs
 }
 
-# SCRIPT="$SCRIPT --implementation tfidf_minhash"
-# SCRIPT="$SCRIPT  --num_perm 1024 --threshold 0.9"
-
+DEFAULT_WORKFLOW="nd_cl"
+# DEFAULT_WORKFLOW="cl_nd"
 # Run only on head node
 if $IS_HEAD; then
 # --- Experiment 1.1: Data Size Scaling ---
@@ -258,48 +257,8 @@ if $IS_HEAD; then
     echo "##################################################"
     echo ""
 
-    FILE_SIZES=(10 20 40) # Reduced max size for feasibility, adjust as needed (80?)
-
-    for size in "${FILE_SIZES[@]}"; do
-      run_experiment "nd_cl" "$size" "$DEFAULT_THRESHOLD" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "datasize"
-      run_experiment "cl_nd" "$size" "$DEFAULT_THRESHOLD" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "datasize"
-    done
-
-    # --- Experiment 2.1: Varying Similarity Threshold ---
-    echo ""
-    echo "##################################################"
-    echo "# Running Experiment 2.1: Threshold Sensitivity  #"
-    echo "##################################################"
-    echo ""
-
-    THRESHOLDS=(0.6 0.7 0.8 0.9)
-
-    for thr in "${THRESHOLDS[@]}"; do
-      run_experiment "nd_cl" "$DEFAULT_LIMIT_FILES" "$thr" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "threshold"
-      run_experiment "cl_nd" "$DEFAULT_LIMIT_FILES" "$thr" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "threshold"
-    done
-
-    # --- Experiment 2.2: Varying Number of Permutations ---
-    echo ""
-    echo "##################################################"
-    echo "# Running Experiment 2.2: NumPerm Sensitivity    #"
-    echo "##################################################"
-    echo ""
-
-    NUM_PERMS=(128 256 512)
-
-    for perm in "${NUM_PERMS[@]}"; do
-      run_experiment "nd_cl" "$DEFAULT_LIMIT_FILES" "$DEFAULT_THRESHOLD" "$perm" "$BASE_CONFIG_FILE" "numperm"
-      run_experiment "cl_nd" "$DEFAULT_LIMIT_FILES" "$DEFAULT_THRESHOLD" "$perm" "$BASE_CONFIG_FILE" "numperm"
-    done
-    # # for NUM_FILES in 1 5 10 20 30 40; do
-    # for NUM_FILES in 1; do
-    #     COMMAND="$SCRIPT --limit_files $NUM_FILES"
-    #     rm -rf /dev/shm/c4_outputs 
-    #     mkdir -p /dev/shm/c4_outputs
-    #     echo "$COMMAND"
-    #     eval "$COMMAND"
-    # done
+    run_experiment "$DEFAULT_WORKFLOW" "$DEFAULT_LIMIT_FILES" "$DEFAULT_THRESHOLD" "$DEFAULT_NUM_PERM" "$BASE_CONFIG_FILE" "default"
+    
 else
     echo "Skipping deduplication script on worker node"
 fi
