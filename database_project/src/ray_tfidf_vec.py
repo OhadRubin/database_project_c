@@ -677,10 +677,7 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     base_cfg.args = cfg.args # Pass args down
 
 
-    workflow_duplicate_count = 0 # Initialize count
-    # --- Execute Stages ---
-    
-    
+    # --- Execute Stages ---    
     cfg.stages_list[0]["mock"] = True
     
     stage_functions = [
