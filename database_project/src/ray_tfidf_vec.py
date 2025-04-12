@@ -686,10 +686,10 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     # --- Execute Stages ---
     
     
-    cfg.stages_list[0].mock = True
+    cfg.stages_list[0]["mock"] = True
     
     stage_functions = [
-                    fake_stage1 if cfg.stages_list[0].mock  else stage1,
+                    fake_stage1 if cfg.stages_list[0]["mock"]  else stage1,
                        stage_2, stage_3, stage_4] # Define stage functions for all 4 stages
     metric_list = []
     for i, stage_config_data in enumerate(cfg.stages_list):
