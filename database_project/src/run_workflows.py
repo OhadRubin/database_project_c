@@ -216,9 +216,6 @@ if __name__ == "__main__":
             cl_inference_time = metric_list[0]["inference_time"]
             cl_stage2_time = metric_list[1]["total_time"]
             
-
-            
-            
             logger.info(f"CL step completed in {cl_end_time - cl_start_time:.2f}s.")
             logger.info(f"  CL Train Time: {cl_train_time:.2f}s")
             logger.info(f"  CL Inference Time: {cl_inference_time:.2f}s")
