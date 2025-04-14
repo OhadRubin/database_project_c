@@ -148,7 +148,8 @@ PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
 PYTHON_EXEC="python3.10"
 SRC_DIR="$PROJECT_DIR/database_project/src"
 
-
+# DEFAULT_WORKFLOW="nd_cl"
+DEFAULT_WORKFLOW="cl_nd"
 # Experiment Defaults
 BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
 DEBUG_MODE=false
@@ -252,8 +253,7 @@ run_experiment() {
     sleep 10 # Small delay between runs
 }
 
-# DEFAULT_WORKFLOW="nd_cl"
-DEFAULT_WORKFLOW="cl_nd"
+
 # Run only on head node
 if $IS_HEAD; then
 # --- Experiment 1.1: Data Size Scaling ---
