@@ -93,6 +93,9 @@ def create_parser():
         "--mock", type=bool, default=False, help="Mock the execution"
     )
     parser.add_argument(
+        "--max_docs", type=int, default=50000, help="Number of documents to learn the clustering on"
+    )
+    parser.add_argument(
         "--mock_stage1", type=bool, default=False, help="Mock the execution"
     )
 

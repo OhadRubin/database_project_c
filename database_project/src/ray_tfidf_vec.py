@@ -666,6 +666,7 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     cluster_spec = [x["kmeans"]["n_clusters"] for x in cfg.stages_list]
 
     limit = cfg.get("ray_max_docs_limit", None)
+    cfg.args.max_docs
     if limit:
          ds = ds.limit(limit)
          print(f"Dataset limited to {limit} documents.")
@@ -675,8 +676,8 @@ def run_cl_step_for_workflow(ds, cfg: object) -> Tuple[ray.data.Dataset, int, fl
     base_cfg.cluster_spec = cluster_spec
     base_cfg.partition_cols = partition_cols
     base_cfg.args = cfg.args # Pass args down
-
-
+    base_cfg.base_stage.max_docs = cfg.args.max_docs
+    
     # --- Execute Stages ---    
     
     stage_functions = [

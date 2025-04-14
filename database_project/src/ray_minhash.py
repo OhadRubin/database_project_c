@@ -759,7 +759,7 @@ class RayBTSMinhashDeduplicator:
 
 
 
-def dedup(ray_df, cfg):
+def dedup(ray_df, cfg, mode="filter"):
     import logging
     logger = logging.getLogger(__name__)
     
