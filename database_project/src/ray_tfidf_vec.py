@@ -1,6 +1,6 @@
 # /database_project/src/ray_tfidf_vec.py
 import jax
-print(jax.device_count())
+print(f"jax.device_count()")
 import jax.numpy as jnp
 import os
 import time
@@ -187,17 +187,6 @@ class KMeans(object):
         self.device = device
         self.balanced = balanced
         self.use_jax = use_jax
-
-
-    # @classmethod
-    # def load(cls, path_to_file):
-    #     with open(path_to_file, 'rb') as f:
-    #         saved = pickle.load(f)
-    #     return cls(saved['n_clusters'], saved['cluster_centers'], torch.device('cpu'), saved['balanced'])
-
-    # def save(self, path_to_file):
-    #     with open(path_to_file, 'wb+') as f :
-    #         pickle.dump(self.__dict__, f)
 
     def initialize(self, X):
         num_samples = len(X)

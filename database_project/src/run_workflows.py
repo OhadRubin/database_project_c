@@ -98,6 +98,35 @@ def create_parser():
     parser.add_argument(
         "--mock_stage1", type=bool, default=False, help="Mock the execution"
     )
+    # --- Ray MinHash Parameters ---
+    parser.add_argument(
+        "--union_find_parallel_num", type=int, default=400, 
+        help="Number of parallel workers for union-find algorithm"
+    )
+    parser.add_argument(
+        "--union_threshold", type=int, default=256,
+        help="Threshold for minhash values group to perform union-find algorithm"
+    )
+    parser.add_argument(
+        "--max_pending_edge_buffer_task", type=int, default=20,
+        help="Max number of pending edge buffer ray tasks"
+    )
+    parser.add_argument(
+        "--num_edge_buffer_task_returns", type=int, default=10,
+        help="Number of edge buffer tasks for ray.wait to return"
+    )
+    parser.add_argument(
+        "--max_pending_filter_tasks", type=int, default=20,
+        help="Max number of pending filter ray tasks"
+    )
+    parser.add_argument(
+        "--num_filter_task_returns", type=int, default=10,
+        help="Number of filter tasks for ray.wait to return"
+    )
+    parser.add_argument(
+        "--merge_batch_size", type=int, default=100,
+        help="Batch size for merging operations"
+    )
 
     return parser
 

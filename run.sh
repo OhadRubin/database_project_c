@@ -203,6 +203,9 @@ run_experiment() {
     local config_file="$5"
     local experiment_tag="$6" # e.g., "datasize", "threshold", "numperm"
 
+
+    sudo kill -9 $(sudo lsof -w /dev/accel0 | awk 'NR>1{print $2}' |uniq)
+    sleep 10
     # Create a unique output directory name based on parameters
     local output_subdir="${workflow}_${experiment_tag}_files${limit_files}_thresh${threshold}_perm${num_perm}"
     local output_path="$BASE_OUTPUT_DIR/$output_subdir"

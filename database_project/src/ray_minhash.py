@@ -296,13 +296,16 @@ class BTSUnionFind:
                 continue
             self.parent[x] = new_px_dict[key]
 
-    def squeeze(self):
+    def squeeze(self, mode="filter"):
         dup_keys = {
             x
             for x in self.parent
             if x // BATCH_SIZE % self.parallel_num == self.parallel_id
         }
-        self.parent = dup_keys
+        if mode == "filter":
+            self.parent = dup_keys
+        else:
+            self.parent = {x: self.parent[x] for x in dup_keys}
         self.old_parent = {}
         self.edge_buffer = []
         ray.get(self.remote_edge_buffers[self.parallel_id].clear.remote())
@@ -328,7 +331,7 @@ class BTSUnionFind:
             except Exception as e:
                 # Log error if find fails unexpectedly
                 # If find fails, assume the item is its own root
-                print(f"Error finding root for UID {uid}: {e}", exc_info=True)
+                print(f"Error finding root for UID {uid}: {e}")
                 root_id = uid  # Fallback: assume it's its own root
             root_id_results.append((original_index, root_id))
         return root_id_results
@@ -577,7 +580,7 @@ class RayBTSMinhashDeduplicator:
             results.extend(ray.get(ready_refs))
         return results
 
-    def merge(self):
+    def merge(self, mode="filter"):
         self.merge_op_batch([
             union_find.edge_redistribution.remote()
             for union_find in self.union_find_list
@@ -592,7 +595,7 @@ class RayBTSMinhashDeduplicator:
                 for union_find in self.union_find_list
             ])
         self.merge_op_batch([
-            union_find.squeeze.remote() for union_find in self.union_find_list
+            union_find.squeeze.remote(mode) for union_find in self.union_find_list
         ])
 
     def filter_with_union_find(self, samples: pa.Table) -> pa.Table:
@@ -666,7 +669,7 @@ class RayBTSMinhashDeduplicator:
                                 else:
                                     print(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
                 except Exception as e:
-                    print(f"Error getting results from get_root_ids: {e}", exc_info=True)
+                    print(f"Error getting results from get_root_ids: {e}")
                 finally:
                     del ready_refs  # Memory management
             
@@ -685,7 +688,7 @@ class RayBTSMinhashDeduplicator:
                             else:
                                 print(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
             except Exception as e:
-                print(f"Error getting remaining results from get_root_ids: {e}", exc_info=True)
+                print(f"Error getting remaining results from get_root_ids: {e}")
             finally:
                 del result_refs  # Memory management
         
@@ -709,7 +712,7 @@ class RayBTSMinhashDeduplicator:
             tagged_table = samples.append_column("duplicate_set_id", pa.array(root_ids_array, type=pa.int64()))
             return tagged_table
         except Exception as e:
-            print(f"Error appending duplicate_set_id column: {e}", exc_info=True)
+            print(f"Error appending duplicate_set_id column: {e}")
             # Fallback: return original table
             return samples
         
@@ -739,7 +742,7 @@ class RayBTSMinhashDeduplicator:
         
 
         start_time = time.time()
-        self.merge()
+        self.merge(mode)
         end_time = time.time()
         print(f'merge time = {end_time - start_time}')
         
@@ -819,22 +822,22 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
     
     import time
     start_time = time.time()
+    deduplicator = RayBTSMinhashDeduplicator(
+        text_key=args.column,
+        ngram_size=args.ngram_size,
+        min_ngram_size=args.min_ngram_size,
+        num_permutations=args.num_perm,
+        jaccard_threshold=args.threshold,
+        union_find_parallel_num=args.union_find_parallel_num,
+        union_threshold=args.union_threshold,
+        max_pending_edge_buffer_task=args.max_pending_edge_buffer_task,
+        num_edge_buffer_task_returns=args.num_edge_buffer_task_returns,
+        max_pending_filter_tasks=args.max_pending_filter_tasks,
+        num_filter_task_returns=args.num_filter_task_returns,
+        merge_batch_size=args.merge_batch_size,
+    )
     if mode=="filter":
-        deduplicator = RayBTSMinhashDeduplicator(
-            text_key=args.column,
-            ngram_size=args.ngram_size,
-            min_ngram_size=args.min_ngram_size,
-            num_permutations=args.num_perm,
-            jaccard_threshold=args.threshold,
-            union_find_parallel_num=400,
-            union_threshold=256,
-            max_pending_edge_buffer_task=20,
-            num_edge_buffer_task_returns=10,
-            max_pending_filter_tasks=20,
-            num_filter_task_returns=10,
-            merge_batch_size=100,
-        )
-        deduplicated_dataset = deduplicator.run(ray_df).materialize()
+        deduplicated_dataset = deduplicator.run(ray_df, mode="filter").materialize()
         total_time = time.time() - start_time
         print(f"Total time taken: {total_time:.2f} seconds")
         execution_time = time.time() - start_time
@@ -843,47 +846,15 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
         duplicate_count = original_count - unique_count
         print(f"Duplicate count: {duplicate_count}")
         result_dataset = deduplicated_dataset
-    else:
+    elif mode=="tag":
         # Use tag mode to add duplicate_set_id column
         print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
-        
-        # Calculate duplicate count
-        calc_start_time = time.time()
-        print("Calculating duplicate count from duplicate_set_id...")
-        
-        # Ensure the essential column exists
-        if "duplicate_set_id" not in result_dataset.schema().names:
-            print("'duplicate_set_id' column not found in the dataset after tagging.")
-            # Handle error: maybe return 0 duplicates
-            duplicate_count = 0
-            final_count = original_count
-        else:
-            try:
-                # Group by the duplicate_set_id column and count sizes
-                grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
-                
-                # Count singletons (sets with only 1 record)
-                singleton_count = grouped.filter(lambda row: row["count()"] == 1).count()
-                
-                # Count duplicate sets (sets with > 1 record)
-                duplicate_sets_count = grouped.filter(lambda row: row["count()"] > 1).count()
-                
-                # Calculate the final count if we had deduplicated (kept one from each set)
-                final_count = singleton_count + duplicate_sets_count
-                
-                # Calculate the number of duplicates that would be removed
-                duplicate_count = original_count - final_count
-                
-            except Exception as e:
-                print(f"Error during duplicate count calculation: {e}", exc_info=True)
-                # Fallback
-                duplicate_count = 0
-                final_count = original_count
-        
-        calc_time = time.time() - calc_start_time
-        print(f"Duplicate count calculation took {calc_time:.2f}s")
-        print(f"Final count if deduplicated: {final_count}")
+        duplicate_count = 0 #eturn 0 for now...
+        execution_time = time.time() - start_time
+
+    else:
+        assert False, "Mode not supported"
     
     return result_dataset, duplicate_count, execution_time
 
