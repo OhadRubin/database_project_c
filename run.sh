@@ -148,11 +148,11 @@ PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
 PYTHON_EXEC="python3.10"
 SRC_DIR="$PROJECT_DIR/database_project/src"
 
-# DEFAULT_WORKFLOW="nd_cl"
-DEFAULT_WORKFLOW="cl_nd"
+DEFAULT_WORKFLOW="nd_cl"
+# DEFAULT_WORKFLOW="cl_nd"
 # Experiment Defaults
 BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
-DEBUG_MODE=false
+DEBUG_MODE=true
 if [ "$DEBUG_MODE" = true ]; then
     RUN_SCRIPT="$SRC_DIR/run_workflows.py --mock_stage1 True --max_docs 5000 --dedup_mode tag"
     DEFAULT_LIMIT_FILES=3 # Default data size for parameter sensitivity tests

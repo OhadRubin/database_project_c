@@ -827,11 +827,14 @@ def dedup(ray_df, cfg):
             union_threshold=256,
         )
         deduplicated_dataset = deduplicator.run(ray_df).materialize()
+        execution_time = time.time() - start_time
     
         unique_count = deduplicated_dataset.count()
         duplicate_count = original_count - unique_count
         print(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
         result_dataset = deduplicated_dataset
+        metrics = {"duplicate_count": duplicate_count,
+                   "execution_time": execution_time}
     else:
         print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
@@ -853,8 +856,10 @@ def dedup(ray_df, cfg):
         
         print(f"Cluster deduplication: identified {duplicate_count} duplicates")
         print(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
+        metrics = {"duplicate_count": duplicate_count,
+                   "execution_time": execution_time}
     
-    return result_dataset, duplicate_count
+    return result_dataset, metrics
 
 def run_nd_step_for_workflow(ray_df, args):
     
@@ -892,6 +897,8 @@ def run_nd_step_for_workflow(ray_df, args):
         duplicate_count = original_count - unique_count
         print(f"Duplicate count: {duplicate_count}")
         result_dataset = deduplicated_dataset
+        metrics = {"duplicate_count": duplicate_count,
+                   "execution_time": execution_time}
     elif mode=="tag":
         # Use tag mode to add duplicate_set_id column
         print("Running deduplication in tag mode to add duplicate_set_id column")
@@ -910,11 +917,13 @@ def run_nd_step_for_workflow(ray_df, args):
         final_count = singleton_count + duplicate_sets_count
         duplicate_count = original_count - final_count
         execution_time = time.time() - start_time
+        metrics = {"duplicate_count": duplicate_count,
+                   "execution_time": execution_time}
 
     else:
         assert False, "Mode not supported"
     
-    return result_dataset, duplicate_count, execution_time
+    return result_dataset, metrics
 
 
 

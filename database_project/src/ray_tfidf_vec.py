@@ -458,8 +458,9 @@ def stage1(ds: ray.data.Dataset, cfg: object) -> Tuple[ray.data.Dataset, float, 
 from ray_minhash import dedup
 @ray.remote(num_returns=2)
 def dedup_remote(ds: ray.data.Dataset, cfg: object):
-    deduplicated_dataset, duplicate_count = dedup(ds, cfg)
-    return deduplicated_dataset.materialize(), duplicate_count
+    deduplicated_dataset, metrics = dedup(ds, cfg)
+    
+    return deduplicated_dataset.materialize(), metrics
 
 @ray.remote(num_returns=3) # Now returns dataset, train_time, inference_time
 def fit_predict_remote(ds: ray.data.Dataset, cfg):
@@ -522,23 +523,24 @@ def stage_n(ds: ray.data.Dataset, cfg: object, current_stage_index: int):
         # Conditional deduplication
         if cfg.should_dedup:
             # Call dedup_remote which now returns two refs
-            final_ds_ref, dupe_count_ref = dedup_remote.remote(clustered_ds_ref, cfg)
-            processed_refs.append((final_ds_ref, train_time_ref, infer_time_ref, dupe_count_ref))
+            final_ds_ref, metrics_ref = dedup_remote.remote(clustered_ds_ref, cfg)
+            processed_refs.append((final_ds_ref, train_time_ref, infer_time_ref, metrics_ref))
         else:
             # If not deduping, store the clustered dataset ref and a 0 placeholder for count ref
-            processed_refs.append((clustered_ds_ref, train_time_ref, infer_time_ref, ray.put(0)))
+            processed_refs.append((clustered_ds_ref, train_time_ref, infer_time_ref, ray.put(dict())))
 
-        time.sleep(20) # Consider if this sleep is still necessary/optimal - Removed for now
+        time.sleep(5) # Consider if this sleep is still necessary/optimal - Removed for now
 
     # Retrieve all results
     dataset_results = ray.get([ref_pair[0] for ref_pair in processed_refs]) # Get datasets
     train_time_results = ray.get([ref_pair[1] for ref_pair in processed_refs]) # Get train times
     infer_time_results = ray.get([ref_pair[2] for ref_pair in processed_refs]) # Get inference times
-    count_results = ray.get([ref_pair[3] for ref_pair in processed_refs]) # Get counts
+    metric_results = ray.get([ref_pair[3] for ref_pair in processed_refs]) # Get metrics
 
     # Aggregate results
     ds_list = dataset_results # List of datasets
-    total_cluster_duplicates = sum(count_results) # Sum the counts
+    total_cluster_duplicates = sum([x.get("duplicate_count", 0) for x in metric_results]) # Sum the counts
+    
     total_train_time = np.mean(train_time_results) if train_time_results else 0
     total_inference_time = np.mean(infer_time_results) if infer_time_results else 0
 

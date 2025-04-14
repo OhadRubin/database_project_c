@@ -210,7 +210,10 @@ if __name__ == "__main__":
             # === Stage 1: ND ===
             print("Running ND step...")
             nd_start_time = time.time()
-            intermediate_ray_ds, nd_duplicates, nd_step_time = run_nd_step_for_workflow(ray_df, args)
+            intermediate_ray_ds, metrics  = run_nd_step_for_workflow(ray_df, args)
+            
+            nd_duplicates = metrics["duplicate_count"]
+            nd_step_time = metrics["execution_time"]
             nd_end_time = time.time()
             nd_step_time = nd_end_time - nd_start_time # More accurate timing
             print(f"ND step completed in {nd_step_time:.2f}s. Found {nd_duplicates} duplicates.")
