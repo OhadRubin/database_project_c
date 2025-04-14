@@ -506,7 +506,7 @@ class RayBTSMinhashDeduplicator:
         self.num_filter_task_returns = num_filter_task_returns
         self.merge_batch_size = min(merge_batch_size, union_find_parallel_num)
 
-        logger.info(f'union_find_parallel_num = {union_find_parallel_num}')
+        print(f'union_find_parallel_num = {union_find_parallel_num}')
         self.union_find_parallel_num = union_find_parallel_num
         self.union_threshold = union_threshold
         self.remote_edge_buffers = [
@@ -735,13 +735,13 @@ class RayBTSMinhashDeduplicator:
         ).materialize()
 
         end_time = time.time()
-        logger.info(f'MinHash time = {end_time - start_time}')
+        print(f'MinHash time = {end_time - start_time}')
         
 
         start_time = time.time()
         self.merge()
         end_time = time.time()
-        logger.info(f'merge time = {end_time - start_time}')
+        print(f'merge time = {end_time - start_time}')
         
         if mode == "filter":
             result = dataset.map_batches(
@@ -760,11 +760,9 @@ class RayBTSMinhashDeduplicator:
 
 
 def dedup(ray_df, cfg, mode="filter"):
-    import logging
-    logger = logging.getLogger(__name__)
+
     
     original_count = ray_df.count()
-    logger.info(f"Cluster deduplication: starting with {original_count} records")
     
     import time
     start_time = time.time()
@@ -784,10 +782,10 @@ def dedup(ray_df, cfg, mode="filter"):
     
         unique_count = deduplicated_dataset.count()
         duplicate_count = original_count - unique_count
-        logger.info(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
+        print(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
         result_dataset = deduplicated_dataset
     else:
-        logger.info("Running deduplication in tag mode to add duplicate_set_id column")
+        print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
         
         # Calculate duplicate count from the tagged dataset
@@ -805,21 +803,19 @@ def dedup(ray_df, cfg, mode="filter"):
         # Calculate duplicate count
         duplicate_count = original_count - final_count
         
-        logger.info(f"Cluster deduplication: identified {duplicate_count} duplicates")
-        logger.info(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
+        print(f"Cluster deduplication: identified {duplicate_count} duplicates")
+        print(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
     
     return result_dataset, duplicate_count
 
 def run_nd_step_for_workflow(ray_df, args, mode="filter"):
-    import logging
-    logger = logging.getLogger(__name__)
     
-    logger.info(f"minhash_lsh called with args: {args}")
+    print(f"minhash_lsh called with args: {args}")
 
 
     
     original_count = ray_df.count()
-    logger.info(f"Original record count: {original_count}")
+    print(f"Original record count: {original_count}")
     
     import time
     start_time = time.time()
@@ -840,21 +836,21 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
         )
         deduplicated_dataset = deduplicator.run(ray_df).materialize()
         total_time = time.time() - start_time
-        logger.info(f"Total time taken: {total_time:.2f} seconds")
+        print(f"Total time taken: {total_time:.2f} seconds")
         execution_time = time.time() - start_time
-        logger.info(f"Total execution time: {execution_time:.2f} seconds")
+        print(f"Total execution time: {execution_time:.2f} seconds")
         unique_count = deduplicated_dataset.count()
         duplicate_count = original_count - unique_count
-        logger.info(f"Duplicate count: {duplicate_count}")
+        print(f"Duplicate count: {duplicate_count}")
         result_dataset = deduplicated_dataset
     else:
         # Use tag mode to add duplicate_set_id column
-        logger.info("Running deduplication in tag mode to add duplicate_set_id column")
+        print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
         
         # Calculate duplicate count
         calc_start_time = time.time()
-        logger.info("Calculating duplicate count from duplicate_set_id...")
+        print("Calculating duplicate count from duplicate_set_id...")
         
         # Ensure the essential column exists
         if "duplicate_set_id" not in result_dataset.schema().names:
@@ -886,8 +882,8 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
                 final_count = original_count
         
         calc_time = time.time() - calc_start_time
-        logger.info(f"Duplicate count calculation took {calc_time:.2f}s")
-        logger.info(f"Final count if deduplicated: {final_count}")
+        print(f"Duplicate count calculation took {calc_time:.2f}s")
+        print(f"Final count if deduplicated: {final_count}")
     
     return result_dataset, duplicate_count, execution_time
 
