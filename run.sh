@@ -153,9 +153,9 @@ SRC_DIR="$PROJECT_DIR/database_project/src"
 BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
 DEBUG_MODE=false
 if [ "$DEBUG_MODE" = true ]; then
-    RUN_SCRIPT="$SRC_DIR/run_workflows.py --mock_stage1 True --max_docs 5000"
-    DEFAULT_LIMIT_FILES=1 # Default data size for parameter sensitivity tests
-    else
+    RUN_SCRIPT="$SRC_DIR/run_workflows.py --mock_stage1 True --max_docs 5000 --dedup_mode tag"
+    DEFAULT_LIMIT_FILES=3 # Default data size for parameter sensitivity tests
+else
     RUN_SCRIPT="$SRC_DIR/run_workflows.py"
     DEFAULT_LIMIT_FILES=40 # Default data size for parameter sensitivity tests
 fi

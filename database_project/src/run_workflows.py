@@ -127,6 +127,10 @@ def create_parser():
         "--merge_batch_size", type=int, default=100,
         help="Batch size for merging operations"
     )
+    parser.add_argument(
+        "--dedup_mode", type=str, default="filter",choices=["filter", "tag"],
+        help="Deduplication mode: 'filter' or 'tag'"
+    )
 
     return parser
 

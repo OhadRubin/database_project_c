@@ -69,12 +69,12 @@ def analyze_duplicate_set(group_df, ngram_size, min_ngram_size):
         
     return {"false_positive_rate": np.array([output])}
 
+
+
 # Map each group to its false positive rate
 false_positive_stats = intermediate_ray_ds.groupby("duplicate_set_id").map_groups(
     analyze_duplicate_set, 
     batch_format="pandas"
 )
-
-
 
 false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] >= 0).mean("false_positive_rate").materialize()
