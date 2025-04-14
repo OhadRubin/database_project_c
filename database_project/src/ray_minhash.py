@@ -309,7 +309,29 @@ class BTSUnionFind:
 
     def dup_idx(self, queries):
         return [idx for uid, idx in queries if uid in self.parent]
+    
+    def get_root_ids(self, queries):
+        """
+        For each queried UID, find its root in the Union-Find structure.
 
+        Args:
+            queries: A list of tuples, where each tuple is (uid, original_batch_index).
+
+        Returns:
+            A list of tuples, where each tuple is (original_batch_index, root_id).
+            The root_id is the representative ID for the set the uid belongs to.
+        """
+        root_id_results = []
+        for uid, original_index in queries:
+            try:
+                root_id = self.find(uid)  # Find the root ID using path compression
+            except Exception as e:
+                # Log error if find fails unexpectedly
+                # If find fails, assume the item is its own root
+                logger.error(f"Error finding root for UID {uid}: {e}", exc_info=True)
+                root_id = uid  # Fallback: assume it's its own root
+            root_id_results.append((original_index, root_id))
+        return root_id_results
 
 from typing import Set, Iterable
 from itertools import tee
@@ -601,8 +623,98 @@ class RayBTSMinhashDeduplicator:
             name for name in samples.column_names if name != "uid"
         ]
         return samples.select(columns_to_keep).filter(mask)
+    
+    def tag_with_union_find(self, samples: pa.Table) -> pa.Table:
+        """
+        Queries the distributed Union-Find structure to get the root ID for each sample
+        and appends it as the 'duplicate_set_id' column.
+        
+        Unlike filter_with_union_find, this doesn't remove any rows, it just tags them.
+        """
+        num_samples = len(samples)
+        if num_samples == 0:
+            # Handle empty batches: return the batch with an empty duplicate_set_id column
+            empty_duplicate_ids = pa.array([], type=pa.int64())
+            return samples.append_column("duplicate_set_id", empty_duplicate_ids)
 
-    def run(self, dataset, **kwargs):
+        # Prepare query dictionaries to send to the appropriate actors
+        query_dict = {}
+        for idx, uid in enumerate(samples["uid"]):
+            uid = uid.as_py()
+            # Use the same hash function as in filter_with_union_find
+            hash_id = uid // BATCH_SIZE % self.union_find_parallel_num
+            if hash_id not in query_dict:
+                query_dict[hash_id] = []
+            query_dict[hash_id].append((uid, idx))
+        
+        # Initialize array for storing root IDs
+        root_ids_array = np.full(num_samples, -1, dtype=np.int64)  # Initialize with placeholder
+        
+        # Query the union_find actors for root IDs
+        result_refs = []
+        for hash_id, query in query_dict.items():
+            if len(result_refs) > self.max_pending_filter_tasks:
+                ready_refs, result_refs = ray.wait(
+                    result_refs, num_returns=self.num_filter_task_returns)
+                try:
+                    results = ray.get(ready_refs)
+                    for result_list in results:
+                        if result_list:  # Check if the result list is not empty
+                            for original_index, root_id in result_list:
+                                if 0 <= original_index < num_samples:  # Bounds check
+                                    root_ids_array[original_index] = root_id
+                                else:
+                                    logger.warning(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
+                except Exception as e:
+                    logger.error(f"Error getting results from get_root_ids: {e}", exc_info=True)
+                finally:
+                    del ready_refs  # Memory management
+            
+            # Call the new remote method 'get_root_ids'
+            result_refs.append(self.union_find_list[hash_id].get_root_ids.remote(query))
+        
+        # Process any remaining refs
+        if result_refs:
+            try:
+                results = ray.get(result_refs)
+                for result_list in results:
+                    if result_list:  # Check if the result list is not empty
+                        for original_index, root_id in result_list:
+                            if 0 <= original_index < num_samples:  # Bounds check
+                                root_ids_array[original_index] = root_id
+                            else:
+                                logger.warning(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
+            except Exception as e:
+                logger.error(f"Error getting remaining results from get_root_ids: {e}", exc_info=True)
+            finally:
+                del result_refs  # Memory management
+        
+        # Sanity check and fallback for unassigned entries
+        unassigned_indices = np.where(root_ids_array == -1)[0]
+        if len(unassigned_indices) > 0:
+            unassigned_count = len(unassigned_indices)
+            logger.warning(f"Found {unassigned_count} samples missing a root_id assignment in a batch of size {num_samples}.")
+            # Assign self-UID as root for unassigned entries
+            uid_column = samples["uid"]  # Re-access column if needed
+            for i in unassigned_indices:
+                uid_scalar = uid_column[i]
+                if uid_scalar.is_valid:
+                    root_ids_array[i] = uid_scalar.as_py()
+                else:
+                    logger.error(f"Cannot assign self-UID for missing root_id at index {i} because original UID is invalid.")
+                    root_ids_array[i] = -2  # Example sentinel value
+        
+        # Append the new column
+        try:
+            tagged_table = samples.append_column("duplicate_set_id", pa.array(root_ids_array, type=pa.int64()))
+            return tagged_table
+        except Exception as e:
+            logger.error(f"Error appending duplicate_set_id column: {e}", exc_info=True)
+            # Fallback: return original table
+            return samples
+        
+        
+    def run(self, dataset, mode="filter", **kwargs):
         start_time = time.time()
         id_generator = IdGenerator.remote()
 
@@ -614,7 +726,7 @@ class RayBTSMinhashDeduplicator:
             new_table = table.append_column("uid",
                                             pa.array(list(uid_list)))
             return new_table
-
+            
         dataset = dataset.map_batches(
             minhash_with_uid,
             batch_format='pyarrow',
@@ -630,11 +742,19 @@ class RayBTSMinhashDeduplicator:
         self.merge()
         end_time = time.time()
         logger.info(f'merge time = {end_time - start_time}')
-        result = dataset.map_batches(
-            self.filter_with_union_find,
-            batch_format='pyarrow',
-            zero_copy_batch=True,
-        )
+        
+        if mode == "filter":
+            result = dataset.map_batches(
+                self.filter_with_union_find,
+                batch_format='pyarrow',
+                zero_copy_batch=True,
+            )
+        else:
+            result = dataset.map_batches(
+                self.tag_with_union_find,
+                batch_format='pyarrow',
+                zero_copy_batch=True,
+            )
         return result
 
 
@@ -650,24 +770,47 @@ def dedup(ray_df, cfg):
     start_time = time.time()
     
     # Use same parameters from args but through cfg
-    deduplicator = RayBTSMinhashDeduplicator(
-        text_key=cfg.args.column,
-        ngram_size=cfg.args.ngram_size,
-        min_ngram_size=cfg.args.min_ngram_size,
-        num_permutations=cfg.args.num_perm,
-        jaccard_threshold=cfg.args.threshold,
-        union_find_parallel_num=10,
-        union_threshold=256,
-    )
-    deduplicated_dataset = deduplicator.run(ray_df).materialize()
+    if mode=="filter":
+        deduplicator = RayBTSMinhashDeduplicator(
+            text_key=cfg.args.column,
+            ngram_size=cfg.args.ngram_size,
+            min_ngram_size=cfg.args.min_ngram_size,
+            num_permutations=cfg.args.num_perm,
+            jaccard_threshold=cfg.args.threshold,
+            union_find_parallel_num=10,
+            union_threshold=256,
+        )
+        deduplicated_dataset = deduplicator.run(ray_df).materialize()
     
-    unique_count = deduplicated_dataset.count()
-    duplicate_count = original_count - unique_count
-    logger.info(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
+        unique_count = deduplicated_dataset.count()
+        duplicate_count = original_count - unique_count
+        logger.info(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
+        result_dataset = deduplicated_dataset
+    else:
+        logger.info("Running deduplication in tag mode to add duplicate_set_id column")
+        result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
+        
+        # Calculate duplicate count from the tagged dataset
+        grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
+        
+        # Count singletons (sets with only 1 record)
+        singleton_count = grouped.filter(lambda row: row["count()"] == 1).count()
+        
+        # Count duplicate sets (sets with > 1 record)
+        duplicate_sets_count = grouped.filter(lambda row: row["count()"] > 1).count()
+        
+        # Calculate final count (if we were to deduplicate)
+        final_count = singleton_count + duplicate_sets_count
+        
+        # Calculate duplicate count
+        duplicate_count = original_count - final_count
+        
+        logger.info(f"Cluster deduplication: identified {duplicate_count} duplicates")
+        logger.info(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
     
-    return deduplicated_dataset, duplicate_count
+    return result_dataset, duplicate_count
 
-def run_nd_step_for_workflow(ray_df, args):
+def run_nd_step_for_workflow(ray_df, args, mode="filter"):
     import logging
     logger = logging.getLogger(__name__)
     
@@ -680,30 +823,73 @@ def run_nd_step_for_workflow(ray_df, args):
     
     import time
     start_time = time.time()
+    if mode=="filter":
+        deduplicator = RayBTSMinhashDeduplicator(
+            text_key=args.column,
+            ngram_size=args.ngram_size,
+            min_ngram_size=args.min_ngram_size,
+            num_permutations=args.num_perm,
+            jaccard_threshold=args.threshold,
+            union_find_parallel_num=400,
+            union_threshold=256,
+            max_pending_edge_buffer_task=20,
+            num_edge_buffer_task_returns=10,
+            max_pending_filter_tasks=20,
+            num_filter_task_returns=10,
+            merge_batch_size=100,
+        )
+        deduplicated_dataset = deduplicator.run(ray_df).materialize()
+        total_time = time.time() - start_time
+        logger.info(f"Total time taken: {total_time:.2f} seconds")
+        execution_time = time.time() - start_time
+        logger.info(f"Total execution time: {execution_time:.2f} seconds")
+        unique_count = deduplicated_dataset.count()
+        duplicate_count = original_count - unique_count
+        logger.info(f"Duplicate count: {duplicate_count}")
+        result_dataset = deduplicated_dataset
+    else:
+        # Use tag mode to add duplicate_set_id column
+        logger.info("Running deduplication in tag mode to add duplicate_set_id column")
+        result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
+        
+        # Calculate duplicate count
+        calc_start_time = time.time()
+        logger.info("Calculating duplicate count from duplicate_set_id...")
+        
+        # Ensure the essential column exists
+        if "duplicate_set_id" not in result_dataset.schema().names:
+            logger.error("'duplicate_set_id' column not found in the dataset after tagging.")
+            # Handle error: maybe return 0 duplicates
+            duplicate_count = 0
+            final_count = original_count
+        else:
+            try:
+                # Group by the duplicate_set_id column and count sizes
+                grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
+                
+                # Count singletons (sets with only 1 record)
+                singleton_count = grouped.filter(lambda row: row["count()"] == 1).count()
+                
+                # Count duplicate sets (sets with > 1 record)
+                duplicate_sets_count = grouped.filter(lambda row: row["count()"] > 1).count()
+                
+                # Calculate the final count if we had deduplicated (kept one from each set)
+                final_count = singleton_count + duplicate_sets_count
+                
+                # Calculate the number of duplicates that would be removed
+                duplicate_count = original_count - final_count
+                
+            except Exception as e:
+                logger.error(f"Error during duplicate count calculation: {e}", exc_info=True)
+                # Fallback
+                duplicate_count = 0
+                final_count = original_count
+        
+        calc_time = time.time() - calc_start_time
+        logger.info(f"Duplicate count calculation took {calc_time:.2f}s")
+        logger.info(f"Final count if deduplicated: {final_count}")
     
-    deduplicator = RayBTSMinhashDeduplicator(
-        text_key=args.column,
-        ngram_size=args.ngram_size,
-        min_ngram_size=args.min_ngram_size,
-        num_permutations=args.num_perm,
-        jaccard_threshold=args.threshold,
-        union_find_parallel_num=400,
-        union_threshold=256,
-        max_pending_edge_buffer_task=20,
-        num_edge_buffer_task_returns=10,
-        max_pending_filter_tasks=20,
-        num_filter_task_returns=10,
-        merge_batch_size=100,
-    )
-    deduplicated_dataset = deduplicator.run(ray_df).materialize()
-    total_time = time.time() - start_time
-    logger.info(f"Total time taken: {total_time:.2f} seconds")
-    execution_time = time.time() - start_time
-    logger.info(f"Total execution time: {execution_time:.2f} seconds")
-    unique_count = deduplicated_dataset.count()
-    duplicate_count = original_count - unique_count
-    logger.info(f"Duplicate count: {duplicate_count}")
-    return deduplicated_dataset, duplicate_count, execution_time
+    return result_dataset, duplicate_count, execution_time
 
 
 
