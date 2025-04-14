@@ -45,8 +45,7 @@ class BenchmarkRun(Base):
     def create_from_args(cls, session, args, duplicate_count, record_count, execution_time,
                        num_nodes=1, notes=None, implementation="pyspark", limit_files=None, total_size_gb=None,
                        # Add new parameters corresponding to new columns
-                       nd_time_sec=None, nd_output_count=None, config_file_path=None,
-                       cl_train_time_sec=None, cl_inference_time_sec=None, cl_stage2_time_sec=None,
+                       metrics=None,
                        config_details_json=None, 
                     #    cluster_size_distribution_json=None
                        ):
