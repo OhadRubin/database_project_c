@@ -195,6 +195,9 @@ if __name__ == "__main__":
             print("Running ND step...")
             nd_start_time = time.time()
             intermediate_ray_ds, metrics  = run_nd_step_for_workflow(ray_df, args)
+            nd_end_time = time.time()
+            print(f"ND step completed in {nd_end_time - nd_start_time:.2f} seconds.")
+            metrics_obj["nd_time"] = nd_end_time - nd_start_time
             metrics_obj["nd_metrics"] = metrics
         
             # Prepare for CL step
@@ -203,7 +206,11 @@ if __name__ == "__main__":
 
             # === Stage 2: CL ===
             print("Running CL step...")
+            cl_start_time = time.time()
             clustered_ds, metric_list = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
+            cl_end_time = time.time()
+            print(f"CL step completed in {cl_end_time - cl_start_time:.2f} seconds.")
+            metrics_obj["cl_time"] = cl_end_time - cl_start_time
             
             metrics_obj["cl_metrics"] = metric_list
 
@@ -215,7 +222,11 @@ if __name__ == "__main__":
             # === Stage 1+2: CL+ND ===
             print("Running CL -> ND step...")
 
+            cl_start_time = time.time()
             clustered_ds, metric_list = run_cl_step_for_workflow(ray_df, cfg)
+            cl_end_time = time.time()
+            print(f"CL step completed in {cl_end_time - cl_start_time:.2f} seconds.")
+            metrics_obj["cl_nd_time"] = cl_end_time - cl_start_time
             
             metrics_obj["cl_metrics"] = metric_list
 
