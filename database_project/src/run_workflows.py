@@ -25,11 +25,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from ray_minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, time)
 from ray_tfidf_vec import run_cl_step_for_workflow # Returns (ds, dupe_count, train_time, infer_time, stage2_time, dist_json)
 
-# --- Import Modified Core Logic Functions ---
-# These functions are assumed to be modified to handle in-memory Ray Datasets
-# and avoid intermediate disk writes between ND and CL steps.
-
-
 
 
 from ml_collections import config_dict
@@ -90,17 +85,15 @@ def create_parser():
         help="Path to clustering config YAML"
     )
 
-    # --- Execution Environment ---
-    parser.add_argument(
-        "--use_ray", type=bool, default=True,
-        help="Use Ray for distributed processing (Always True for these workflows)"
-    ) # CL->ND workflow inherently uses Ray.
 
     # --- Benchmarking ---
     parser.add_argument("--notes", type=str, default=None, help="Notes for benchmark DB entry")
     # --implementation argument is now replaced by --workflow
     parser.add_argument(
         "--mock", type=bool, default=False, help="Mock the execution"
+    )
+    parser.add_argument(
+        "--mock_stage1", type=bool, default=False, help="Mock the execution"
     )
 
     return parser

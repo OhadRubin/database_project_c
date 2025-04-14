@@ -1,16 +1,9 @@
 
-
+# python3.10 database_project/src/run_workflows.py --workflow cl_nd --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1 --mock_stage1 True
 # log the start time
 START_TIME=$(date +%s)
 
-# # Check if Java is installed, if not install it
-# if ! command -v java &> /dev/null; then
-#     echo "Java not found, installing..."
-#     sudo apt-get install default-jdk -y
-    
-# else
-#     echo "Java is already installed"
-# fi
+
 
 # python3.10 -m pip install pyspark
 # python3.10 -m pip install raydp
@@ -133,14 +126,14 @@ else
     echo "START_TIME not set, cannot calculate elapsed time"
 fi
 
-SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 
 
 # WORKFLOW="nd_cl"
 WORKFLOW="cl_nd"
 
-SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 
 
 
@@ -154,7 +147,22 @@ SCRIPT_START_TIME=$START_TIME # For total script time
 PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
 PYTHON_EXEC="python3.10"
 SRC_DIR="$PROJECT_DIR/database_project/src"
-RUN_SCRIPT="$SRC_DIR/run_workflows.py"
+
+
+# Experiment Defaults
+BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
+DEBUG_MODE=true
+if [ "$DEBUG_MODE" = true ]; then
+    RUN_SCRIPT="$SRC_DIR/run_workflows.py --mock_stage1 True"
+    DEFAULT_LIMIT_FILES=1 # Default data size for parameter sensitivity tests
+else
+    RUN_SCRIPT="$SRC_DIR/run_workflows.py"
+    DEFAULT_LIMIT_FILES=40 # Default data size for parameter sensitivity tests
+fi
+
+DEFAULT_THRESHOLD=0.7  # Default threshold for data/perm scaling tests
+DEFAULT_NUM_PERM=256   # Default num_perm for data/threshold scaling tests
+
 DOWNLOAD_SCRIPT="$SRC_DIR/download_c4.py"
 DB_SCRIPT="$SRC_DIR/db.py"
 RAY_EXEC="$HOME/.local/bin/ray" # Adjust if ray is installed elsewhere
@@ -180,11 +188,7 @@ else
 fi
 echo "Using Base Output Directory: $BASE_OUTPUT_DIR"
 
-# Experiment Defaults
-BASE_CONFIG_FILE="$SRC_DIR/configs/base.yml"
-DEFAULT_LIMIT_FILES=40 # Default data size for parameter sensitivity tests
-DEFAULT_THRESHOLD=0.7  # Default threshold for data/perm scaling tests
-DEFAULT_NUM_PERM=256   # Default num_perm for data/threshold scaling tests
+
 
 # Ray Cluster Config
 GCP_ZONE="us-central2-b" # Zone where TPUs are located
@@ -215,8 +219,7 @@ run_experiment() {
     --limit_files $limit_files \
     --threshold $threshold \
     --num_perm $num_perm \
-    --notes \"$notes\" \
-    --use_ray True" # Assuming Ray is always used
+    --notes \"$notes\" "
 
     echo "----------------------------------------------------------------------"
     echo "Running: $notes"

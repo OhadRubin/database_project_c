@@ -1,19 +1,9 @@
 
-
+# python3.10 database_project/src/run_workflows.py --workflow cl_nd --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --limit_files 1
 # log the start time
 START_TIME=$(date +%s)
 
-# # Check if Java is installed, if not install it
-# if ! command -v java &> /dev/null; then
-#     echo "Java not found, installing..."
-#     sudo apt-get install default-jdk -y
-    
-# else
-#     echo "Java is already installed"
-# fi
 
-# python3.10 -m pip install pyspark
-# python3.10 -m pip install raydp
 python3.10 -m pip install ray==2.43.0 numpy~=1.0
 if [ ! -d "~/database_project_c" ]; then
     git clone https://github.com/OhadRubin/database_project_c
@@ -133,14 +123,14 @@ else
     echo "START_TIME not set, cannot calculate elapsed time"
 fi
 
-SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/deduplication_spark.py --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 
 
 # WORKFLOW="nd_cl"
 WORKFLOW="cl_nd"
 
-SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs --use_ray True"
+SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 
 
 
@@ -215,8 +205,7 @@ run_experiment() {
     --limit_files $limit_files \
     --threshold $threshold \
     --num_perm $num_perm \
-    --notes \"$notes\" \
-    --use_ray True" # Assuming Ray is always used
+    --notes \"$notes\" "
 
     echo "----------------------------------------------------------------------"
     echo "Running: $notes"
