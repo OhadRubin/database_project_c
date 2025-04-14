@@ -44,7 +44,7 @@ def jaccard(set_a, set_b):
 # Count false positives per duplicate set
 def analyze_duplicate_set(group_df, ngram_size, min_ngram_size):
     if len(group_df) <= 1:  # Skip singleton groups
-        output = 0.0
+        output = -1
     else:
     
         # Calculate Jaccard similarity for all pairs in this group
@@ -77,4 +77,4 @@ false_positive_stats = intermediate_ray_ds.groupby("duplicate_set_id").map_group
 
 
 
-false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] > 0).mean("false_positive_rate").materialize()
+false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] >= 0).mean("false_positive_rate").materialize()
