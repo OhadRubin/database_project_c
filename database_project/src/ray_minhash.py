@@ -769,10 +769,12 @@ def _analyze_duplicate_set(group_df, threshold, ngram_size, min_ngram_size):
     if len(group_df) <= 1:  # Skip singleton groups
         output = -1
     else:
-    
+        def tok(text):
+            return tokenize(text, ngram_size=ngram_size, min_ngram_size=min_ngram_size)
         # Calculate Jaccard similarity for all pairs in this group
         texts = group_df["text"].tolist()
-        tokenized = [tokenize(text, ngram_size=ngram_size, min_ngram_size=min_ngram_size) for text in texts]
+        
+        tokenized = [tok(text) for text in texts]
         
         false_positive_count = 0
         total_pairs = 0
@@ -799,11 +801,12 @@ def analyze(intermediate_ray_ds, args):
     # Map each group to its false positive rate
     false_positive_stats = intermediate_ray_ds.groupby("duplicate_set_id").map_groups(
         analyze_duplicate_set, 
-        batch_format="pandas"
+        batch_format="pandas",
+        num_cpus=1
     )
 
-    false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] >= 0).mean("false_positive_rate").materialize()
-    return false_positive_stats
+    false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] >= 0).mean("false_positive_rate")
+    return float(false_positive_stats)
 
 
 def dedup(ray_df, cfg):
@@ -840,7 +843,7 @@ def dedup(ray_df, cfg):
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
         execution_time = time.time() - start_time
         print(f"Finished tag mode, it took {execution_time:.2f} seconds")
-        false_positive_rate = analyze(result_dataset, args)
+        false_positive_rate = analyze(result_dataset, cfg.args)
         
         # Calculate duplicate count from the tagged dataset
         grouped = result_dataset.groupby("duplicate_set_id").count().materialize()

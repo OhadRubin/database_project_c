@@ -22,8 +22,8 @@ import time
 import logging
 import argparse
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from ray_minhash import run_nd_step_for_workflow # Returns (ray_dataset, dupe_count, time)
-from ray_tfidf_vec import run_cl_step_for_workflow # Returns (ds, dupe_count, train_time, infer_time, stage2_time, dist_json)
+from ray_minhash import run_nd_step_for_workflow
+from ray_tfidf_vec import run_cl_step_for_workflow
 
 
 
@@ -38,11 +38,9 @@ def read_config(path):
         cfg = config_dict.ConfigDict(config_data)
     return cfg
 
-# --- Logging Setup ---
-# logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-# logger = logging.getLogger(__name__)
 
-# --- Utility Function ---
+
+
 def get_total_size_gb(files):
     try:
         total_bytes = sum(os.path.getsize(f) for f in files)
@@ -157,21 +155,15 @@ if __name__ == "__main__":
     import ray
     ray.init(address='auto',
                 dashboard_host="0.0.0.0",
-                # log_to_driver=False # Keep logs separate per node if needed
                 ignore_reinit_error=True # Allow re-initialization if already connected
                 )
     num_nodes_used = len([x for x in ray.nodes() if x["alive"]])
 
 
-    # --- Load Configs ---
     cfg = read_config(args.config_file)
-    cfg.args = args # Make args accessible within config if needed by downstream funcs
+    cfg.args = args
 
-    # Prepare full config details for logging
-    config_details = {
-        "args": vars(args),
-        "clustering_config": cfg.to_dict() # Convert ConfigDict to dict for JSON
-    }
+    config_details = { "args": vars(args), "clustering_config": cfg.to_dict() }
     config_details_json = json.dumps(config_details, indent=2, default=str) # Use default=str for non-serializable types
 
 
@@ -268,10 +260,6 @@ if __name__ == "__main__":
         )
         session.add(benchmark_run)
 
-        # Add resource/accuracy metrics here if they were collected
-        # e.g., benchmark_run.add_resource_metrics(...)
-        # e.g., benchmark_run.add_accuracy_metrics(...)
-
         # Commit everything related to this run
         session.commit()
         print(f"Benchmark data saved with ID: {benchmark_run.id}")
@@ -279,14 +267,9 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"Workflow '{args.workflow}' failed: {e}", exc_info=True)
-        # Consider logging a failed run marker to the DB if desired
         sys.exit(1)
 
     finally:
-        # Optional: Shutdown Ray explicitly if needed, otherwise it might persist
-        # if ray.is_initialized():
-        #     print("Shutting down Ray...")
-        #     ray.shutdown()
         pass
 
     print(f"Workflow {args.workflow} completed successfully.")

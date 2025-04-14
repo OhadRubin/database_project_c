@@ -32,11 +32,7 @@ class BenchmarkRun(Base):
     
     config_details_json = Column(Text, nullable=True) # JSON string of args + clustering config
     metrics = Column(JSON, nullable=True) # JSON string of metrics
-    # cluster_size_distribution_json = Column(Text, nullable=True) # JSON string of final cluster counts
 
-    # Relationships
-    # resource_metrics = relationship("ResourceMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
-    # accuracy_metrics = relationship("AccuracyMetric", back_populates="benchmark_run", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<BenchmarkRun(id={self.id}, timestamp={self.timestamp}, implementation={self.implementation})>"
@@ -44,10 +40,8 @@ class BenchmarkRun(Base):
     @classmethod
     def create_from_args(cls, session, args, duplicate_count, record_count, execution_time,
                        num_nodes=1, notes=None, implementation="pyspark", limit_files=None, total_size_gb=None,
-                       # Add new parameters corresponding to new columns
                        metrics=None,
                        config_details_json=None, 
-                    #    cluster_size_distribution_json=None
                        ):
         """
         Create a new BenchmarkRun entry from command line args and results, including detailed metrics.
@@ -99,148 +93,8 @@ def object_session(obj):
     """Get the session for an object"""
     return sa_object_session(obj)
 
-# # Example usage for monitoring resource stats while running a benchmark
-# def monitor_resources(benchmark_run_id, session, interval=1.0):
-#     """
-#     Monitor system resources and add to database
-#     Requires psutil library
-
-#     Parameters:
-#     -----------
-#     benchmark_run_id : int
-#         ID of the benchmark run
-#     session : SQLAlchemy session
-#         Database session
-#     interval : float
-#         Monitoring interval in seconds
-#     """
-#     try:
-#         import psutil
-#         import time
-#         import statistics
-
-#         benchmark_run = session.query(BenchmarkRun).get(benchmark_run_id)
-#         if not benchmark_run:
-#             print(f"Benchmark run with ID {benchmark_run_id} not found")
-#             return
-
-#         cpu_percent = []
-#         memory_percent = []
-#         start_time = time.time()
-
-#         # Get initial disk and network counters
-#         initial_disk_io = psutil.disk_io_counters()
-#         initial_net_io = psutil.net_io_counters()
-
-#         try:
-#             while True:
-#                 cpu_percent.append(psutil.cpu_percent())
-#                 memory_info = psutil.virtual_memory()
-#                 memory_percent.append(memory_info.percent)
-#                 time.sleep(interval)
-#         except KeyboardInterrupt:
-#             # Calculate resource metrics
-#             run_time = time.time() - start_time
-
-#             # Calculate disk and network usage
-#             final_disk_io = psutil.disk_io_counters()
-#             final_net_io = psutil.net_io_counters()
-
-#             disk_read_mb = (final_disk_io.read_bytes - initial_disk_io.read_bytes) / (1024 * 1024)
-#             disk_write_mb = (final_disk_io.write_bytes - initial_disk_io.write_bytes) / (1024 * 1024)
-#             net_sent_mb = (final_net_io.bytes_sent - initial_net_io.bytes_sent) / (1024 * 1024)
-#             net_recv_mb = (final_net_io.bytes_recv - initial_net_io.bytes_recv) / (1024 * 1024)
-
-#             # Get system memory info to convert percent to MB
-#             memory_info = psutil.virtual_memory()
-#             total_memory_mb = memory_info.total / (1024 * 1024)
-
-#             avg_memory_percent = statistics.mean(memory_percent) if memory_percent else 0
-#             max_memory_percent = max(memory_percent) if memory_percent else 0
-
-#             avg_memory_mb = (avg_memory_percent / 100) * total_memory_mb
-#             max_memory_mb = (max_memory_percent / 100) * total_memory_mb
-
-#             # Add resource metrics to database
-#             # Note: add_resource_metrics no longer commits internally
-#             # benchmark_run.add_resource_metrics(
-#             #     cpu_percent_avg=statistics.mean(cpu_percent) if cpu_percent else 0,
-#             #     cpu_percent_max=max(cpu_percent) if cpu_percent else 0,
-#             #     memory_usage_avg_mb=avg_memory_mb,
-#             #     memory_usage_max_mb=max_memory_mb,
-#             #     network_sent_mb=net_sent_mb,
-#             #     network_recv_mb=net_recv_mb,
-#             #     disk_read_mb=disk_read_mb,
-#             #     disk_write_mb=disk_write_mb
-#             # )
-#             # Commit is now handled by the caller (e.g., after the main benchmark run is added)
-#             session.commit() # Commit here after adding the metrics for this monitoring session
-
-#             print(f"Resource monitoring completed after {run_time:.2f} seconds. Metrics added and committed.")
-
-#     except ImportError:
-#         print("psutil library required for resource monitoring. Install with: pip install psutil")
-#     except Exception as e:
-#         print(f"Error during resource monitoring: {e}")
-#         session.rollback() # Rollback if error occurs during metric addition/commit
-
 if __name__ == '__main__':
     # Example usage
     engine = init_db()
     session = get_session(engine)
     print("Database initialized successfully")
-
-    # Example of creating a run and adding metrics (caller commits)
-    # try:
-    #     # Create a dummy args object for testing
-    #     class DummyArgs:
-    #         input_file = "test_input"
-    #         output = "test_output"
-    #         threshold = 0.7
-    #         ngram_size = 5
-    #         min_ngram_size = 5
-    #         num_perm = 256
-    #         limit_files = 10
-    #         config_file = "test_config.yml"
-
-    #     dummy_args = DummyArgs()
-    #     dummy_config = {"key": "value"}
-    #     dummy_config_json = json.dumps(dummy_config)
-    #     dummy_dist_json = json.dumps([{"cluster_A": 0, "count": 100}])
-
-    #     new_run = BenchmarkRun.create_from_args(
-    #         session=session,
-    #         args=dummy_args,
-    #         duplicate_count=10,
-    #         record_count=90,
-    #         execution_time=123.45,
-    #         implementation="nd_cl",
-    #         num_nodes=4,
-    #         notes="Test run with new fields",
-    #         total_size_gb=1.2,
-    #         nd_time_sec=30.5,
-    #         nd_output_count=95,
-    #         cl_train_time_sec=20.1,
-    #         cl_inference_time_sec=50.2,
-    #         cl_stage2_time_sec=0.0,
-    #         config_details_json=dummy_config_json,
-    #         cluster_size_distribution_json=dummy_dist_json
-    #     )
-    #     print(f"Created run (before commit): {new_run}")
-
-    #     # Add metrics (optional)
-    #     new_run.add_resource_metrics(
-    #         cpu_percent_avg=50.0, cpu_percent_max=90.0,
-    #         memory_usage_avg_mb=1024, memory_usage_max_mb=2048
-    #     )
-    #     print(f"Added resource metrics (before commit)")
-
-    #     # Commit the run and its metrics
-    #     session.commit()
-    #     print(f"Committed run with ID: {new_run.id}")
-
-    # except Exception as e:
-    #     print(f"Error during example usage: {e}")
-    #     session.rollback()
-    # finally:
-    #     session.close()
