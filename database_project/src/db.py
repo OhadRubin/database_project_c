@@ -9,7 +9,7 @@ import json # For config details serialization
 Base = declarative_base()
 
 class BenchmarkRun(Base):
-    __tablename__ = 'benchmark_runs'
+    __tablename__ = 'benchmark_runs_v2'
 
     id = Column(Integer, primary_key=True)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -29,13 +29,9 @@ class BenchmarkRun(Base):
     total_size_gb = Column(Float, nullable=True)
 
     # --- NEW COLUMNS based on change.md ---
-    nd_time_sec = Column(Float, nullable=True) # Time for the ND step (if applicable)
-    nd_output_count = Column(Integer, nullable=True) # Records after ND step (for ND->CL)
-    config_file_path = Column(String(255), nullable=True) # Path to clustering YAML config
-    cl_train_time_sec = Column(Float, nullable=True) # Aggregated CL training time
-    cl_inference_time_sec = Column(Float, nullable=True) # Aggregated CL inference time
-    cl_stage2_time_sec = Column(Float, nullable=True) # Time for stage2 logic (if applicable)
+    
     config_details_json = Column(Text, nullable=True) # JSON string of args + clustering config
+    metrics = Column(JSON, nullable=True) # JSON string of metrics
     # cluster_size_distribution_json = Column(Text, nullable=True) # JSON string of final cluster counts
 
     # Relationships
@@ -72,15 +68,8 @@ class BenchmarkRun(Base):
             notes=notes,
             limit_files=limit_files if limit_files is not None else args.limit_files,
             total_size_gb=total_size_gb,
-            # Assign new fields
-            nd_time_sec=nd_time_sec,
-            nd_output_count=nd_output_count,
-            config_file_path=config_file_path if config_file_path is not None else args.config_file,
-            cl_train_time_sec=cl_train_time_sec,
-            cl_inference_time_sec=cl_inference_time_sec,
-            cl_stage2_time_sec=cl_stage2_time_sec,
+            metrics=metrics,
             config_details_json=config_details_json,
-            # cluster_size_distribution_json=cluster_size_distribution_json
         )
         session.add(run)
         # Commit is handled by the caller (run_workflows.py) after potentially adding metrics

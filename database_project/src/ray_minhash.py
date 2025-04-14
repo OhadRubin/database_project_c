@@ -838,6 +838,9 @@ def dedup(ray_df, cfg):
     else:
         print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
+        execution_time = time.time() - start_time
+        print(f"Finished tag mode, it took {execution_time:.2f} seconds")
+        false_positive_rate = analyze(result_dataset, args)
         
         # Calculate duplicate count from the tagged dataset
         grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
@@ -857,7 +860,8 @@ def dedup(ray_df, cfg):
         print(f"Cluster deduplication: identified {duplicate_count} duplicates")
         print(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
         metrics = {"duplicate_count": duplicate_count,
-                   "execution_time": execution_time}
+                   "execution_time": execution_time,
+                   "false_positive_rate": false_positive_rate}
     
     return result_dataset, metrics
 
@@ -903,7 +907,9 @@ def run_nd_step_for_workflow(ray_df, args):
         # Use tag mode to add duplicate_set_id column
         print("Running deduplication in tag mode to add duplicate_set_id column")
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
-        
+        execution_time = time.time() - start_time
+        print(f"Finished tag mode, it took {execution_time:.2f} seconds")
+        false_positive_rate = analyze(result_dataset, args)
         # Count the number of records in each duplicate set
         grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
         
@@ -916,9 +922,10 @@ def run_nd_step_for_workflow(ray_df, args):
         # Calculate final count (if we were to deduplicate)
         final_count = singleton_count + duplicate_sets_count
         duplicate_count = original_count - final_count
-        execution_time = time.time() - start_time
+        
         metrics = {"duplicate_count": duplicate_count,
-                   "execution_time": execution_time}
+                   "execution_time": execution_time,
+                   "false_positive_rate": false_positive_rate}
 
     else:
         assert False, "Mode not supported"

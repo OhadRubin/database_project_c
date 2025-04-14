@@ -175,32 +175,24 @@ if __name__ == "__main__":
     config_details_json = json.dumps(config_details, indent=2, default=str) # Use default=str for non-serializable types
 
 
-
+    metrics_obj = {}
     # --- Load Data ---
-    try:
-        data_load_start = time.time()
-        input_files = glob.glob(args.input_file)
-        if not input_files:
-            print(f"No files found matching input pattern: {args.input_file}")
-            sys.exit(1)
-
-        if args.limit_files is not None and args.limit_files > 0:
-            input_files = input_files[:args.limit_files]
-            print(f"Limited input to {len(input_files)} files.")
-        elif args.limit_files is not None and args.limit_files <= 0:
-             print(f"limit_files is {args.limit_files}, processing all found files.")
-
-        total_size_gb = get_total_size_gb(input_files)
-        print(f"Reading {len(input_files)} files (Total size: {total_size_gb:.2f} GB)...")
-
-        ray_df = ray.data.read_json(input_files, override_num_blocks=cfg.num_blocks)
-        # It's good practice to materialize early if memory allows, or before complex ops
-        # ray_df = ray_df.materialize()
-        print(f"Data loaded into Ray Dataset in {time.time() - data_load_start:.2f} seconds.")
-
-    except Exception as e:
-        print(f"Error loading data from {args.input_file}: {e}", exc_info=True)
+    data_load_start = time.time()
+    input_files = glob.glob(args.input_file)
+    if not input_files:
+        print(f"No files found matching input pattern: {args.input_file}")
         sys.exit(1)
+
+    if args.limit_files is not None and args.limit_files > 0:
+        input_files = input_files[:args.limit_files]
+        print(f"Limited input to {len(input_files)} files.")
+    elif args.limit_files is not None and args.limit_files <= 0:
+            print(f"limit_files is {args.limit_files}, processing all found files.")
+
+    total_size_gb = get_total_size_gb(input_files)
+    print(f"Reading {len(input_files)} files (Total size: {total_size_gb:.2f} GB)...")
+
+    ray_df = ray.data.read_json(input_files, override_num_blocks=cfg.num_blocks)
 
 
     # --- Execute Workflow ---
@@ -211,38 +203,17 @@ if __name__ == "__main__":
             print("Running ND step...")
             nd_start_time = time.time()
             intermediate_ray_ds, metrics  = run_nd_step_for_workflow(ray_df, args)
-            
-            nd_duplicates = metrics["duplicate_count"]
-            nd_step_time = metrics["execution_time"]
-            nd_end_time = time.time()
-            nd_step_time = nd_end_time - nd_start_time # More accurate timing
-            print(f"ND step completed in {nd_step_time:.2f}s. Found {nd_duplicates} duplicates.")
-
-            nd_output_record_count = intermediate_ray_ds.count() # Capture count after ND
-            total_duplicate_count = nd_duplicates
-            print(f"Record count after ND: {nd_output_record_count}")
-
+            metrics_obj["nd_metrics"] = metrics
+        
             # Prepare for CL step
             intermediate_ray_ds = intermediate_ray_ds.repartition(cfg.num_blocks).materialize()
             cfg.base_stage.should_dedup = False # Ensure CL step doesn't dedup again
 
             # === Stage 2: CL ===
             print("Running CL step...")
-            cl_start_time = time.time()
-            # CL step now returns: ds, dupe_count(0), train_t, infer_t, stage2_t(0), dist_json
             clustered_ds, metric_list = run_cl_step_for_workflow(intermediate_ray_ds, cfg)
-            cl_end_time = time.time()
             
-            cl_train_time = metric_list[0]["train_time"]
-            cl_inference_time = metric_list[0]["inference_time"]
-            cl_stage2_time = metric_list[1]["total_time"]
-            
-            print(f"CL step completed in {cl_end_time - cl_start_time:.2f}s.")
-            print(f"  CL Train Time: {cl_train_time:.2f}s")
-            print(f"  CL Inference Time: {cl_inference_time:.2f}s")
-            # final_record_count is the count after ND in this workflow
-            final_record_count = nd_output_record_count
-
+            metrics_obj["cl_metrics"] = metric_list
 
         elif args.workflow == "cl_nd":
             print("Executing CL -> ND workflow...")
@@ -251,24 +222,11 @@ if __name__ == "__main__":
 
             # === Stage 1+2: CL+ND ===
             print("Running CL -> ND step...")
-            cl_nd_start_time = time.time()
-            # CL step now returns: ds, dupe_count, train_t, infer_t, stage2_t, dist_json
 
             clustered_ds, metric_list = run_cl_step_for_workflow(ray_df, cfg)
-            cl_nd_end_time = time.time()
             
-            cl_train_time = metric_list[0]["train_time"]
-            cl_inference_time = metric_list[0]["inference_time"]
-            cl_stage2_time = metric_list[1]["total_time"]
-            total_duplicate_count = metric_list[-1]["n_duplicates"]
+            metrics_obj["cl_metrics"] = metric_list
 
-            final_record_count = clustered_ds.count()  # Calculate final count *after* the step
-            print(f"CL->ND workflow completed in {cl_nd_end_time - cl_nd_start_time:.2f}s.")
-            print(f"  Total duplicates found across clusters: {total_duplicate_count}")
-            print(f"  Final record count: {final_record_count}")
-            print(f"  CL Train Time (Agg): {cl_train_time:.2f}s")
-            print(f"  CL Inference Time (Agg): {cl_inference_time:.2f}s")
-            print(f"  CL Stage2 Time: {cl_stage2_time:.2f}s")
 
 
         else:
@@ -305,12 +263,7 @@ if __name__ == "__main__":
             limit_files=args.limit_files,          # Log the limit used
             total_size_gb=total_size_gb,           # Log calculated size
             # New fields
-            nd_time_sec=nd_step_time,
-            nd_output_count=nd_output_record_count, # Will be None for CL->ND
-            config_file_path=args.config_file,
-            cl_train_time_sec=cl_train_time,
-            cl_inference_time_sec=cl_inference_time,
-            cl_stage2_time_sec=cl_stage2_time,
+            metrics=metrics_obj,
             config_details_json=config_details_json,
         )
         session.add(benchmark_run)
