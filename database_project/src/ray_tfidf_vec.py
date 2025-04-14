@@ -541,6 +541,10 @@ def stage_n(ds: ray.data.Dataset, cfg: object, current_stage_index: int):
     ds_list = dataset_results # List of datasets
     total_cluster_duplicates = sum([x.get("duplicate_count", 0) for x in metric_results]) # Sum the counts
     
+    total_false_positive_count = sum([x.get("false_positive_count", 0) for x in metric_results])
+    total_false_positive_rate = np.mean([x.get("false_positive_rate", 0) for x in metric_results])
+    total_total_pairs = sum([x.get("total_pairs", 0) for x in metric_results])
+    
     total_train_time = np.mean(train_time_results) if train_time_results else 0
     total_inference_time = np.mean(infer_time_results) if infer_time_results else 0
 
@@ -563,6 +567,9 @@ def stage_n(ds: ray.data.Dataset, cfg: object, current_stage_index: int):
     
     metrics = {"inference_time": total_inference_time, "train_time": total_train_time, 
                "total_time": stage_time, "stage": cfg.name,
+               "total_false_positive_count": total_false_positive_count,
+               "total_false_positive_rate": total_false_positive_rate,
+               "total_total_pairs": total_total_pairs,
                }
     if cfg.should_dedup:
         metrics["n_duplicates"] = total_cluster_duplicates

@@ -767,7 +767,7 @@ def jaccard(set_a, set_b):
 # Count false positives per duplicate set
 def _analyze_duplicate_set(group_df, threshold, ngram_size, min_ngram_size):
     if len(group_df) <= 1:  # Skip singleton groups
-        output = -1
+        return {"false_positive_rate": np.array([-1]), "false_positive_count": np.array([0]), "total_pairs": np.array([0])}
     else:
         def tok(text):
             return tokenize(text, ngram_size=ngram_size, min_ngram_size=min_ngram_size)
@@ -790,83 +790,32 @@ def _analyze_duplicate_set(group_df, threshold, ngram_size, min_ngram_size):
         
         false_positive_rate = false_positive_count / total_pairs if total_pairs > 0 else 0
         
-        output=float(false_positive_rate) 
+        return {"false_positive_rate": np.array([float(false_positive_rate)]), "false_positive_count": np.array([false_positive_count]), "total_pairs": np.array([total_pairs])}
         
-    return {"false_positive_rate": np.array([output])}
 
 
 def analyze(intermediate_ray_ds, args):
     def analyze_duplicate_set(group_df):
         return _analyze_duplicate_set(group_df, args.threshold, args.ngram_size, args.min_ngram_size)
     # Map each group to its false positive rate
-    false_positive_stats = intermediate_ray_ds.groupby("duplicate_set_id").map_groups(
+    metrics = intermediate_ray_ds.groupby("duplicate_set_id").map_groups(
         analyze_duplicate_set, 
         batch_format="pandas",
         num_cpus=1
     )
 
-    false_positive_stats = false_positive_stats.filter(lambda x: x["false_positive_rate"] >= 0).mean("false_positive_rate")
-    return float(false_positive_stats)
+    metrics = metrics.filter(lambda x: x["false_positive_rate"] >= 0)
+    false_positive_rate =  metrics.mean("false_positive_rate")
+    false_positive_count = metrics.sum("false_positive_count")
+    total_pairs = metrics.sum("total_pairs")
+    return {"false_positive_rate": float(false_positive_rate), "false_positive_count": float(false_positive_count), "total_pairs": float(total_pairs)}
 
 
 def dedup(ray_df, cfg):
+    cfg.args.union_find_parallel_num = 10
+    cfg.args.union_threshold = 256
+    return run_nd_step_for_workflow(ray_df, cfg.args)
 
-    
-    original_count = ray_df.count()
-    
-    import time
-    start_time = time.time()
-    mode = cfg.args.dedup_mode
-    
-    # Use same parameters from args but through cfg
-    if mode=="filter":
-        deduplicator = RayBTSMinhashDeduplicator(
-            text_key=cfg.args.column,
-            ngram_size=cfg.args.ngram_size,
-            min_ngram_size=cfg.args.min_ngram_size,
-            num_permutations=cfg.args.num_perm,
-            jaccard_threshold=cfg.args.threshold,
-            union_find_parallel_num=10,
-            union_threshold=256,
-        )
-        deduplicated_dataset = deduplicator.run(ray_df).materialize()
-        execution_time = time.time() - start_time
-    
-        unique_count = deduplicated_dataset.count()
-        duplicate_count = original_count - unique_count
-        print(f"Cluster deduplication: removed {duplicate_count} duplicates, remaining: {unique_count}")
-        result_dataset = deduplicated_dataset
-        metrics = {"duplicate_count": duplicate_count,
-                   "execution_time": execution_time}
-    else:
-        print("Running deduplication in tag mode to add duplicate_set_id column")
-        result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
-        execution_time = time.time() - start_time
-        print(f"Finished tag mode, it took {execution_time:.2f} seconds")
-        false_positive_rate = analyze(result_dataset, cfg.args)
-        
-        # Calculate duplicate count from the tagged dataset
-        grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
-        
-        # Count singletons (sets with only 1 record)
-        singleton_count = grouped.filter(lambda row: row["count()"] == 1).count()
-        
-        # Count duplicate sets (sets with > 1 record)
-        duplicate_sets_count = grouped.filter(lambda row: row["count()"] > 1).count()
-        
-        # Calculate final count (if we were to deduplicate)
-        final_count = singleton_count + duplicate_sets_count
-        
-        # Calculate duplicate count
-        duplicate_count = original_count - final_count
-        
-        print(f"Cluster deduplication: identified {duplicate_count} duplicates")
-        print(f"Original count: {original_count}, Final count if deduplicated: {final_count}")
-        metrics = {"duplicate_count": duplicate_count,
-                   "execution_time": execution_time,
-                   "false_positive_rate": false_positive_rate}
-    
-    return result_dataset, metrics
 
 def run_nd_step_for_workflow(ray_df, args):
     
@@ -912,7 +861,7 @@ def run_nd_step_for_workflow(ray_df, args):
         result_dataset = deduplicator.run(ray_df, mode="tag").materialize()
         execution_time = time.time() - start_time
         print(f"Finished tag mode, it took {execution_time:.2f} seconds")
-        false_positive_rate = analyze(result_dataset, args)
+        metrics_ = analyze(result_dataset, args)
         # Count the number of records in each duplicate set
         grouped = result_dataset.groupby("duplicate_set_id").count().materialize()
         
@@ -928,7 +877,7 @@ def run_nd_step_for_workflow(ray_df, args):
         
         metrics = {"duplicate_count": duplicate_count,
                    "execution_time": execution_time,
-                   "false_positive_rate": false_positive_rate}
+                   **metrics_}
 
     else:
         assert False, "Mode not supported"

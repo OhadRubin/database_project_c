@@ -147,7 +147,7 @@ SCRIPT_START_TIME=$START_TIME # For total script time
 PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
 PYTHON_EXEC="python3.10"
 SRC_DIR="$PROJECT_DIR/database_project/src"
-
+RAY_DATA_PUSH_BASED_SHUFFLE=1
 DEFAULT_WORKFLOW="nd_cl"
 # DEFAULT_WORKFLOW="cl_nd"
 # Experiment Defaults

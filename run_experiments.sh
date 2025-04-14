@@ -41,7 +41,7 @@ if ! command -v $RAY_EXEC &> /dev/null; then
     python3.10 -m pip install ray==2.43.0 numpy~=1.0
 fi
 
-
+export RAY_DATA_PUSH_BASED_SHUFFLE=1
 NODES_IPS=$(gcloud compute tpus list --zone us-central2-b --filter="name ~ v4-8" --format=json | jq -r '.[].ipAddress')
 N_NODES=$(echo "$NODES_IPS" | wc -l)
 
@@ -128,7 +128,7 @@ SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 # WORKFLOW="nd_cl"
 WORKFLOW="cl_nd"
 
-SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
+SCRIPT="python3.10 database_project/src/run_workflows.py  --dedup_mode tag --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 
 
 
