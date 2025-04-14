@@ -1,7 +1,7 @@
 # /database_project/src/ray_tfidf_vec.py
-# import jax
-# print(jax.device_count())
-# import jax.numpy as jnp
+import jax
+print(jax.device_count())
+import jax.numpy as jnp
 import os
 import time
 import ray
