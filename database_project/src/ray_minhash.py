@@ -13,7 +13,7 @@ import numpy as np
 import pyarrow as pa
 import ray
 import regex
-from loguru import logger
+# from loguru import logger
 from pydantic import Field, PositiveInt
 from typing_extensions import Annotated
 
@@ -328,7 +328,7 @@ class BTSUnionFind:
             except Exception as e:
                 # Log error if find fails unexpectedly
                 # If find fails, assume the item is its own root
-                logger.error(f"Error finding root for UID {uid}: {e}", exc_info=True)
+                print(f"Error finding root for UID {uid}: {e}", exc_info=True)
                 root_id = uid  # Fallback: assume it's its own root
             root_id_results.append((original_index, root_id))
         return root_id_results
@@ -664,9 +664,9 @@ class RayBTSMinhashDeduplicator:
                                 if 0 <= original_index < num_samples:  # Bounds check
                                     root_ids_array[original_index] = root_id
                                 else:
-                                    logger.warning(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
+                                    print(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
                 except Exception as e:
-                    logger.error(f"Error getting results from get_root_ids: {e}", exc_info=True)
+                    print(f"Error getting results from get_root_ids: {e}", exc_info=True)
                 finally:
                     del ready_refs  # Memory management
             
@@ -683,9 +683,9 @@ class RayBTSMinhashDeduplicator:
                             if 0 <= original_index < num_samples:  # Bounds check
                                 root_ids_array[original_index] = root_id
                             else:
-                                logger.warning(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
+                                print(f"Received out-of-bounds index {original_index} for batch size {num_samples}")
             except Exception as e:
-                logger.error(f"Error getting remaining results from get_root_ids: {e}", exc_info=True)
+                print(f"Error getting remaining results from get_root_ids: {e}", exc_info=True)
             finally:
                 del result_refs  # Memory management
         
@@ -693,7 +693,7 @@ class RayBTSMinhashDeduplicator:
         unassigned_indices = np.where(root_ids_array == -1)[0]
         if len(unassigned_indices) > 0:
             unassigned_count = len(unassigned_indices)
-            logger.warning(f"Found {unassigned_count} samples missing a root_id assignment in a batch of size {num_samples}.")
+            print(f"Found {unassigned_count} samples missing a root_id assignment in a batch of size {num_samples}.")
             # Assign self-UID as root for unassigned entries
             uid_column = samples["uid"]  # Re-access column if needed
             for i in unassigned_indices:
@@ -701,7 +701,7 @@ class RayBTSMinhashDeduplicator:
                 if uid_scalar.is_valid:
                     root_ids_array[i] = uid_scalar.as_py()
                 else:
-                    logger.error(f"Cannot assign self-UID for missing root_id at index {i} because original UID is invalid.")
+                    print(f"Cannot assign self-UID for missing root_id at index {i} because original UID is invalid.")
                     root_ids_array[i] = -2  # Example sentinel value
         
         # Append the new column
@@ -709,7 +709,7 @@ class RayBTSMinhashDeduplicator:
             tagged_table = samples.append_column("duplicate_set_id", pa.array(root_ids_array, type=pa.int64()))
             return tagged_table
         except Exception as e:
-            logger.error(f"Error appending duplicate_set_id column: {e}", exc_info=True)
+            print(f"Error appending duplicate_set_id column: {e}", exc_info=True)
             # Fallback: return original table
             return samples
         
@@ -854,7 +854,7 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
         
         # Ensure the essential column exists
         if "duplicate_set_id" not in result_dataset.schema().names:
-            logger.error("'duplicate_set_id' column not found in the dataset after tagging.")
+            print("'duplicate_set_id' column not found in the dataset after tagging.")
             # Handle error: maybe return 0 duplicates
             duplicate_count = 0
             final_count = original_count
@@ -876,7 +876,7 @@ def run_nd_step_for_workflow(ray_df, args, mode="filter"):
                 duplicate_count = original_count - final_count
                 
             except Exception as e:
-                logger.error(f"Error during duplicate count calculation: {e}", exc_info=True)
+                print(f"Error during duplicate count calculation: {e}", exc_info=True)
                 # Fallback
                 duplicate_count = 0
                 final_count = original_count
