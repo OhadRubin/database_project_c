@@ -1,5 +1,3 @@
----
-
 # Final Project Report: Comparing Scalable Near-Duplicate Detection and Clustering Workflows
 
 **Course:** Advanced Topics in Data Management
