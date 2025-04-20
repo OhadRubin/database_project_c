@@ -128,7 +128,7 @@ SCRIPT="$SCRIPT --implementation tfidf_minhash_ray"
 # WORKFLOW="nd_cl"
 WORKFLOW="cl_nd"
 
-SCRIPT="python3.10 database_project/src/run_workflows.py  --dedup_mode tag --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
+SCRIPT="python3.10 database_project/src/run_workflows.py --workflow $WORKFLOW --input_file \"/dev/shm/c4_files/c4-train.*.json.gz\" --output /dev/shm/c4_outputs"
 
 
 
@@ -143,6 +143,10 @@ PROJECT_DIR="$HOME/database_project_c" # Adjust if your project is elsewhere
 PYTHON_EXEC="python3.10"
 SRC_DIR="$PROJECT_DIR/database_project/src"
 RUN_SCRIPT="$SRC_DIR/run_workflows.py"
+
+
+RUN_SCRIPT="$RUN_SCRIPT --dedup_mode tag"
+
 DOWNLOAD_SCRIPT="$SRC_DIR/download_c4.py"
 DB_SCRIPT="$SRC_DIR/db.py"
 RAY_EXEC="$HOME/.local/bin/ray" # Adjust if ray is installed elsewhere
