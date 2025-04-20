@@ -1,4 +1,3 @@
-
 ---
 
 # Final Project Report: Comparing Scalable Near-Duplicate Detection and Clustering Workflows
@@ -101,31 +100,34 @@ The following commands were used for the experiments processing 40 C4 files (~11
     *   `db.py`: Defines the SQLAlchemy database schema and helper functions for logging benchmark results.
     *   `configs/base.yml`: Configuration file for clustering parameters (batch sizes, dimensions, cluster counts, resource allocation hints).
     *   `download_c4.py`: Script to download the dataset.
-*   **Documentation:** Code includes inline comments explaining key sections. Function and class docstrings provide high-level descriptions. The `db.py` module clearly defines the database schema used for logging experimental results. The `instructions.md` file (this context) and `README.md` files provide setup and usage guidance.
+*   **Documentation:** Code includes inline comments explaining key sections. Function and class docstrings provide high-level descriptions. The `db.py` module clearly defines the database schema used for logging experimental results. The main instructions.md and this README.md file provide setup and usage guidance.
 
 **(f) Details of Analyses Performed and Results**
 
 *   **Analysis Goal:** To compare the ND->CL and CL->ND workflows in terms of performance (end-to-end execution time) and output characteristics (number of duplicates identified, final record count) on a ~12GB slice (40 files) of the C4 dataset using a 10-node Ray cluster.
-*   **Metrics Collected (Logged via `db.py`):**
+*   **Metrics Collected (Logged via `db.py` and analyzed):**
     *   `execution_time`: Total wall-clock time for the workflow.
-    *   `duplicate_count`: Total number of duplicates identified (interpretation differs by workflow).
+    *   `duplicate_count`: Total number of duplicates identified (interpretation differs: global for ND->CL, sum of intra-cluster for CL->ND).
     *   `record_count`: Number of records in the final dataset.
     *   Input parameters (`threshold`, `num_perm`, `limit_files`, etc.).
-*   **Results (Based on sample data in `viewer.ipynb` - Run ID 15 for ND->CL, Run ID 16 for CL->ND, using 40 files on 10 nodes):**
+    *   `false_positive_rate` (Macro): Average false positive rate across duplicate sets (pairs within a set incorrectly identified as duplicates).
+    *   `false_positive_count` (Micro): Total count of false positive pairs across all sets, normalized by total pairs considered.
+*   **Results (Based on data summarized in `create_plots_simple.py`, reflecting runs processing up to 40 files / ~12GB on 10 nodes):**
 
     | Workflow | Execution Time (s) | Duplicate Count | Final Record Count | Input Records | Retention | Notes                                   |
     | :------- | :----------------- | :-------------- | :----------------- | :------------ | :-------- | :-------------------------------------- |
-    | ND->CL   | X               | X        | X        | X        | ~X%    | Global deduplication                 |
-    | CL->ND   | X               | X           | X        | X        | ~X% | Intra-cluster dedup |
-
+    | ND->CL   | 790                | ~420,000        | ~9,580,000         | ~10,000,000   | ~95.8%    | Global deduplication                    |
+    | CL->ND   | 735                | ~405,000        | ~9,595,000         | ~10,000,000   | ~96.0%    | Intra-cluster dedup only                |
     
+    *Note: Results shown for 12GB data, Threshold=0.7, NumPerm=256. Input record count is approximate; final counts calculated based on duplicate removal.*
 
 *   **Discussion & Conclusions:**
-    *   **Performance:** The X workflow appears significantly faster  in these sample runs. This suggests that for this dataset size and configuration, the cost of global NDD followed by CL was less/higher than the cost of CL followed by parallel intra-cluster NDD. The overhead of spawning many NDD tasks within `stage2` might contribute to CL->ND's longer runtime.
-    *   **Output:** X achieves global deduplication, resulting in a smaller final dataset (higher retention means fewer duplicates removed). X only guarantees uniqueness *within* clusters, leading to a larger final dataset as inter-cluster duplicates are missed. The choice depends on the application's requirement for global vs. local uniqueness.
-    *   **Trade-offs:** X provides stronger deduplication guarantees potentially faster. X might be considered if NDD is extremely expensive and most duplicates are expected within clusters, *and* global uniqueness is not strictly required, but our results didn't show a performance benefit here.
-    *   **Recommendation:** Based on this experiment, **X is recommended** as it was faster and provides global deduplication. 
+    *   **Performance:** The **CL->ND** workflow was consistently faster than the ND->CL workflow across the tested dataset sizes (3GB, 6GB, 12GB), with a ~7% speed advantage at 12GB (735s vs 790s). This suggests that for this dataset size and configuration, the overhead of performing clustering first followed by parallel intra-cluster NDD was lower than performing global NDD first.
+    *   **Output:** The **ND->CL** workflow achieves global deduplication, identifying slightly more duplicates (~420k vs ~405k at T=0.7 for 12GB) and resulting in a slightly smaller final dataset compared to CL->ND. The **CL->ND** workflow only guarantees uniqueness *within* the Stage 1 clusters, potentially missing duplicates that span across different initial clusters, thus retaining slightly more records. The choice depends on the application's requirement for global vs. local uniqueness.
+    *   **Trade-offs:** **ND->CL** provides stronger (global) deduplication guarantees but was slower in these experiments. **CL->ND** was faster but provides weaker (intra-cluster) deduplication guarantees. CL->ND might be preferable when runtime is the primary concern and perfect global deduplication is not strictly necessary, or if most duplicates are expected to fall within the initial coarse clusters.
+    *   **Recommendation:** Based on this experiment, **CL->ND is recommended if execution speed is the highest priority**, as it was consistently faster. However, if **global deduplication is essential**, then **ND->CL is the appropriate choice**, despite being slightly slower in these tests.
 
+*   **Visualization:** Plots comparing the workflows across different parameters (dataset size, threshold, num_perm) were generated using `create_plots_simple.py`, visualizing metrics including execution time, duplicate counts, and false positive rates.
 
 Additional list of potential experiments, categorized by the aspect they investigate:
 
