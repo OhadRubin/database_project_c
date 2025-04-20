@@ -1,4 +1,3 @@
-Okay, I understand. The previous writeup was structured like a detailed research paper based on the `toc.md`. Let's condense and refocus it to directly address the points (a) through (f) outlined in `instructions.md`, emphasizing the integration of course topics and the specific implementation.
 
 ---
 
