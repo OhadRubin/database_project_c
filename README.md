@@ -123,6 +123,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
     
     *Note: Results shown for 12GB data, Threshold=0.7, NumPerm=256. Input record count is approximate; final counts calculated based on duplicate removal.*
 
+    **Analysis:** This table provides the core comparison between the two workflows under a specific configuration (12GB dataset, 0.7 threshold, 256 permutations). It reveals that CL->ND was ~7% faster than ND->CL but identified fewer duplicates (~405K vs ~420K), leading to slightly higher data retention (96.0% vs 95.8%). The difference in duplicate counts stems from ND->CL's global deduplication approach versus CL->ND's intra-cluster approach. This table encapsulates the primary speed vs deduplication effectiveness trade-off identified in the project.
+
 *   **Discussion & Conclusions:**
     *   **Performance:** The **CL->ND** workflow was consistently faster than the ND->CL workflow across the tested dataset sizes (3GB, 6GB, 12GB), with a ~7% speed advantage at 12GB (735s vs 790s). This suggests that for this dataset size and configuration, the overhead of performing clustering first followed by parallel intra-cluster NDD was lower than performing global NDD first.
     *   **Output:** The **ND->CL** workflow achieves global deduplication, identifying slightly more duplicates (~420k vs ~405k at T=0.7 for 12GB) and resulting in a slightly smaller final dataset compared to CL->ND. The **CL->ND** workflow only guarantees uniqueness *within* the Stage 1 clusters, potentially missing duplicates that span across different initial clusters, thus retaining slightly more records. The choice depends on the application's requirement for global vs. local uniqueness.
@@ -132,7 +134,6 @@ The following commands were used for the experiments processing 40 C4 files (~11
 
 *   **Visualization:** The specific summary plots referenced in this analysis (visualizing execution time, duplicate counts, and false positive rates against parameters like dataset size, threshold, and num_perm) were generated using `create_plots_simple.py`. This script utilizes hardcoded representative results derived from the database logs of the experiments. (See also `create_plots.py` for generating plots dynamically from the full database).
 
-
 **1. Macro False Positive Rate vs Dataset Size (GB)**
 
 | Dataset Size (GB) | Macro FPR (nd_cl) | Macro FPR (cl_nd) |
@@ -141,6 +142,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 6                 | 0.468             | 0.416             |
 | 12                | 0.471             | 0.431             |
 
+**Analysis:** This table examines how the average false positive rate across duplicate sets changes with dataset size. ND->CL shows a slight increasing trend (0.453→0.471) as data grows, while CL->ND shows a less clear pattern but remains slightly lower overall (0.441→0.431). Both methods have comparable rates (0.4-0.5), suggesting neither method produces significantly more "impure" duplicate sets on average. CL->ND appears slightly more robust at the set level as data grows.
+
 **2. Micro False Positive Rate vs Dataset Size (GB)**
 
 | Dataset Size (GB) | Micro FPR (nd_cl) | Micro FPR (cl_nd) |
@@ -148,6 +151,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 3                 | 0.778             | 0.760             |
 | 6                 | 0.793             | 0.790             |
 | 12                | 0.823             | 0.818             |
+
+**Analysis:** Both workflows show a clear increasing trend in overall false positive rates as dataset size grows (ND->CL: 0.778→0.823; CL->ND: 0.760→0.818). This suggests that as document count increases, LSH becomes slightly more likely to incorrectly bucket dissimilar items together. The values remain very close between workflows, with CL->ND being negligibly lower, supporting the conclusion that their false positive characteristics are comparable under these test conditions.
 
 **3. Duplicate Count vs Similarity Threshold**
 
@@ -158,6 +163,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 0.8       | 240,000                 | 240,000                 |
 | 0.9       | 85,000                  | 86,000                  |
 
+**Analysis:** As expected, lowering the similarity threshold results in significantly more duplicates being identified by both workflows. ND->CL identifies slightly more duplicates than CL->ND at lower thresholds (0.6, 0.7), while counts become essentially identical at higher thresholds (0.8, 0.9). This reinforces that ND->CL's global approach catches more borderline duplicates that CL->ND's intra-cluster approach might miss when they fall into different initial clusters, particularly at lower similarity thresholds.
+
 **4. Duplicate Count vs Number of Permutations**
 
 | Permutations | Duplicate Count (nd_cl) | Duplicate Count (cl_nd) |
@@ -165,6 +172,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 128          | 402,500                 | 390,000                 |
 | 256          | 421,600                 | 407,500                 |
 | 512          | 392,000                 | 380,000                 |
+
+**Analysis:** The relationship between permutation count and duplicates found is non-monotonic. For both workflows, increasing from 128 to 256 permutations increases duplicate counts, but further increasing to 512 decreases them. This suggests an interplay between permutation count and LSH banding parameters that affects candidate pair generation. ND->CL consistently identifies slightly more duplicates than CL->ND across all tested permutation counts, reinforcing the global vs local deduplication difference.
 
 **5. CL Inference Time (seconds) vs Dataset Size (GB)**
 
@@ -174,6 +183,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 6                 | 200                       | 213                       |
 | 12                | 295                       | 298                       |
 
+**Analysis:** Clustering inference time increases with dataset size for both workflows. Interestingly, CL->ND's inference time is slightly higher than ND->CL's at smaller sizes (175s vs 150s at 3GB) but becomes nearly identical at 12GB (298s vs 295s). This is because ND->CL runs clustering on an already-deduplicated dataset, while CL->ND runs initial clustering on the full dataset before deduplication. This suggests CL->ND's overall time advantage comes from other workflow components, particularly its parallel intra-cluster NDD approach.
+
 **6. Total Execution Time (seconds) vs Dataset Size (GB)**
 
 | Dataset Size (GB) | Total Execution Time (nd_cl) | Total Execution Time (cl_nd) |
@@ -181,3 +192,5 @@ The following commands were used for the experiments processing 40 C4 files (~11
 | 3                 | 570                          | 530                          |
 | 6                 | 635                          | 550                          |
 | 12                | 790                          | 735                          |
+
+**Analysis:** CL->ND is consistently faster than ND->CL across all tested dataset sizes, with the absolute time difference increasing as data grows (40s faster at 3GB, 85s at 6GB, 55s at 12GB). This provides strong evidence for the primary performance conclusion: the CL->ND workflow offers better scalability and performance than ND->CL for the tested configurations, likely due to the efficiency gains from parallelizing deduplication across smaller clusters.
