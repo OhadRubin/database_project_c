@@ -83,13 +83,13 @@ The following commands were used for the experiments processing 40 C4 files (~11
     ```bash
     python3.10 database_project/src/run_workflows.py --workflow cl_nd --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --use_ray True --limit_files 40
     ```
-    *(Corresponds approximately to Run ID 16 in the sample `viewer.ipynb` data, though parameters might differ slightly from default)*
+    *(Corresponds approximately to Run ID 16 in the database, though parameters might differ slightly from default)*
 
 *   **ND->CL Workflow Run:**
     ```bash
     python3.10 database_project/src/run_workflows.py --workflow nd_cl --input_file "/dev/shm/c4_files/c4-train.*.json.gz" --output /dev/shm/c4_outputs --use_ray True --limit_files 40
     ```
-    *(Corresponds approximately to Run ID 15 in the sample `viewer.ipynb` data, though parameters might differ slightly from default)*
+    *(Corresponds approximately to Run ID 15 in the database, though parameters might differ slightly from default)*
 
 **(e) Code Documentation**
 
@@ -100,6 +100,8 @@ The following commands were used for the experiments processing 40 C4 files (~11
     *   `db.py`: Defines the SQLAlchemy database schema and helper functions for logging benchmark results.
     *   `configs/base.yml`: Configuration file for clustering parameters (batch sizes, dimensions, cluster counts, resource allocation hints).
     *   `download_c4.py`: Script to download the dataset.
+    *   `create_plots.py`: Script to query the benchmark database and generate detailed performance/results plots.
+    *   `create_plots_simple.py`: Script containing hardcoded summary data (derived from experiments) used to generate the specific plots referenced in this README's results section.
 *   **Documentation:** Code includes inline comments explaining key sections. Function and class docstrings provide high-level descriptions. The `db.py` module clearly defines the database schema used for logging experimental results. The main instructions.md and this README.md file provide setup and usage guidance.
 
 **(f) Details of Analyses Performed and Results**
@@ -112,7 +114,7 @@ The following commands were used for the experiments processing 40 C4 files (~11
     *   Input parameters (`threshold`, `num_perm`, `limit_files`, etc.).
     *   `false_positive_rate` (Macro): Average false positive rate across duplicate sets (pairs within a set incorrectly identified as duplicates).
     *   `false_positive_count` (Micro): Total count of false positive pairs across all sets, normalized by total pairs considered.
-*   **Results (Based on data summarized in `create_plots_simple.py`, reflecting runs processing up to 40 files / ~12GB on 10 nodes):**
+*   **Results Summary:** The following table summarizes key metrics for the 12GB dataset size (40 files on 10 nodes), using representative values directly from the hardcoded data in `create_plots_simple.py`:
 
     | Workflow | Execution Time (s) | Duplicate Count | Final Record Count | Input Records | Retention | Notes                                   |
     | :------- | :----------------- | :-------------- | :----------------- | :------------ | :-------- | :-------------------------------------- |
@@ -126,8 +128,9 @@ The following commands were used for the experiments processing 40 C4 files (~11
     *   **Output:** The **ND->CL** workflow achieves global deduplication, identifying slightly more duplicates (~420k vs ~405k at T=0.7 for 12GB) and resulting in a slightly smaller final dataset compared to CL->ND. The **CL->ND** workflow only guarantees uniqueness *within* the Stage 1 clusters, potentially missing duplicates that span across different initial clusters, thus retaining slightly more records. The choice depends on the application's requirement for global vs. local uniqueness.
     *   **Trade-offs:** **ND->CL** provides stronger (global) deduplication guarantees but was slower in these experiments. **CL->ND** was faster but provides weaker (intra-cluster) deduplication guarantees. CL->ND might be preferable when runtime is the primary concern and perfect global deduplication is not strictly necessary, or if most duplicates are expected to fall within the initial coarse clusters.
     *   **Recommendation:** Based on this experiment, **CL->ND is recommended if execution speed is the highest priority**, as it was consistently faster. However, if **global deduplication is essential**, then **ND->CL is the appropriate choice**, despite being slightly slower in these tests.
+    *   **False Positives:** The analysis (visualized in `create_plots_simple.py`) indicated that both workflows exhibited comparable false positive rates (both macro and micro) under the tested conditions (T=0.7). Micro false positive rates showed a slight tendency to increase with larger dataset sizes for both methods.
 
-*   **Visualization:** Plots comparing the workflows across different parameters (dataset size, threshold, num_perm) were generated using `create_plots_simple.py`, visualizing metrics including execution time, duplicate counts, and false positive rates.
+*   **Visualization:** The specific summary plots discussed and presented in this report were generated using `create_plots_simple.py`, which uses hardcoded representative results derived from the experiments. This script visualizes metrics including execution time, duplicate counts, and false positive rates against parameters like dataset size, threshold, and num_perm. (See also `create_plots.py` for dynamic plotting from the database).
 
 Additional list of potential experiments, categorized by the aspect they investigate:
 
